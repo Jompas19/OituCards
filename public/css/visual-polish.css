@@ -19,7 +19,7 @@
   line-height:1.35;
 }
 
-/* Tooltips aparecem apenas durante hover. Clique/foco não mantém o balão aberto. */
+/* Tooltips: clique/foco nunca mantém o balão aberto. */
 .visual-help-row:focus::after,
 .visual-help-row:focus-within::after,
 .visual-option-help:focus::after,
@@ -28,11 +28,28 @@
   visibility:hidden;
   transform:translateY(-2px);
 }
-.visual-help-row:hover::after,
-.visual-option-help:hover::after{
-  opacity:1;
-  visibility:visible;
-  transform:translateY(0);
+
+/* Só exibe tooltip em dispositivos que realmente possuem hover (mouse/trackpad). */
+@media (hover:hover) and (pointer:fine){
+  .visual-help-row:hover::after,
+  .visual-option-help:hover::after{
+    opacity:1;
+    visibility:visible;
+    transform:translateY(0);
+  }
+}
+
+/* Navegadores touch podem manter :hover após o toque; nesses dispositivos o balão fica sempre oculto. */
+@media (hover:none), (pointer:coarse){
+  .visual-help-row::after,
+  .visual-option-help::after,
+  .visual-help-row:hover::after,
+  .visual-option-help:hover::after{
+    opacity:0!important;
+    visibility:hidden!important;
+    transform:translateY(-2px)!important;
+    pointer-events:none!important;
+  }
 }
 
 /* Opções marcáveis ficam quadradas, com check explícito. */
