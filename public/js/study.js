@@ -22,6 +22,12 @@
   );
 
   loadModule(
+    "js/multi-study-guard.js",
+    "data-oitucards-multi-study-guard",
+    "Não foi possível carregar a proteção da edição no estudo combinado."
+  );
+
+  loadModule(
     "js/import-anki-compat.js",
     "data-oitucards-import-anki-compat",
     "Não foi possível carregar a camada de compatibilidade com o Anki."
