@@ -1,6 +1,5 @@
 (function () {
   const $ = (selector, root = document) => root.querySelector(selector);
-  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
   function ensureStyles() {
     if (document.querySelector('link[data-oitucards-visual-polish-css]')) return;
@@ -14,35 +13,72 @@
   function decorateFilter(filterSelector, helperText) {
     const row = $(filterSelector);
     if (!row) return;
+
     const title = $('.study-setting-title', row);
     if (title) {
       title.classList.add('visual-filter-title');
       title.dataset.visualTitle = 'Quer estudar só um tipo?';
     }
+
     const copy = title?.parentElement || row.firstElementChild;
-    if (!copy) return;
-    let helper = $('.visual-filter-default-hint', copy);
-    if (!helper) {
-      helper = document.createElement('span');
-      helper.className = 'visual-filter-default-hint';
-      copy.appendChild(helper);
+    if (copy) {
+      let helper = $('.visual-filter-default-hint', copy);
+      if (!helper) {
+        helper = document.createElement('span');
+        helper.className = 'visual-filter-default-hint';
+        copy.appendChild(helper);
+      }
+      helper.textContent = helperText;
     }
-    helper.textContent = helperText;
+
+    // A explicação principal já está fixa abaixo do título; não exibir tooltip neste bloco.
+    row.classList.remove('visual-help-row');
+    delete row.dataset.visualHelp;
   }
 
-  function bindRedoTiles(optionsSelector) {
-    const options = $(optionsSelector);
-    if (!options) return;
-    $$('.redo-option', options).forEach((tile) => {
-      const radio = $('input[type="radio"]', tile);
-      if (!radio || tile.dataset.visualFullTileBound === 'true') return;
-      tile.dataset.visualFullTileBound = 'true';
-      tile.addEventListener('click', (event) => {
-        if (event.target === radio) return;
-        event.preventDefault();
-        radio.click();
-      });
+  function redoConfigForTile(tile) {
+    if (tile.closest('#studyRedoOptions')) {
+      return {
+        options: $('#studyRedoOptions'),
+        checkbox: $('#studyRedoCheckbox'),
+        groupName: 'redoMode'
+      };
+    }
+    if (tile.closest('#multiRedoOptions')) {
+      return {
+        options: $('#multiRedoOptions'),
+        checkbox: $('#multiRedo'),
+        groupName: 'multiRedoMode'
+      };
+    }
+    return null;
+  }
+
+  function handleRedoTileClick(event) {
+    const tile = event.target.closest('.redo-option');
+    if (!tile) return;
+
+    const config = redoConfigForTile(tile);
+    if (!config?.options || !config.checkbox) return;
+
+    const radio = $('input[type="radio"]', tile);
+    if (!radio) return;
+
+    // Assume totalmente o clique para evitar o comportamento nativo irreversível de radio.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const wasSelected = radio.checked;
+    config.options.querySelectorAll(`input[name="${config.groupName}"]`).forEach((item) => {
+      item.checked = false;
     });
+
+    if (!wasSelected) radio.checked = true;
+    config.checkbox.checked = !wasSelected;
+
+    // O listener original do checkbox atualiza filtros, quantidade e modo de revisão.
+    config.checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    radio.focus({ preventScroll: true });
   }
 
   function syncRatingLayout(areaSelector, repeatSelector, hardSelector) {
@@ -56,8 +92,6 @@
   function sync() {
     decorateFilter('#studyNormalFilterSetting', 'Sem marcar nada: cards novos + revisões de hoje.');
     decorateFilter('#multiNormalFilters', 'Sem marcar nada: cards novos + revisões de hoje.');
-    bindRedoTiles('#studyRedoOptions');
-    bindRedoTiles('#multiRedoOptions');
     syncRatingLayout('#studyRatingArea', '#ratingRepeat', '#ratingHard');
     syncRatingLayout('#multiRatings', '#multiRateRepeat', '#multiRateHard');
   }
@@ -67,6 +101,9 @@
   }
 
   function bindEvents() {
+    // Captura o clique antes dos listeners antigos dos radios/labels.
+    document.addEventListener('click', handleRedoTileClick, true);
+
     document.addEventListener('change', (event) => {
       if (event.target.matches('#studyReviewCheckbox,#multiRepeat,#studyRedoCheckbox,#multiRedo,input[name="redoMode"],input[name="multiRedoMode"]')) {
         scheduleSync();
