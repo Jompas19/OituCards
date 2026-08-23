@@ -1,0 +1,95 @@
+/* OituCards — refinamento visual pós Base Oficial */
+.brand-button{min-width:0;gap:0}
+.brand-mark,.brand-name{display:none!important}
+.brand-logo-official{display:block;width:178px;height:auto;max-height:46px;object-fit:contain;object-position:left center}
+.version-badge{margin-left:9px;font-weight:600}
+
+.page-heading h1{font-weight:650}
+.eyebrow{font-weight:700}
+.button{min-height:40px;padding:0 14px;font-weight:600;white-space:nowrap;line-height:1.1}
+.link-button{font-weight:600}
+.field-label{font-weight:650}
+
+/* Biblioteca mais leve e compacta */
+.deck-list{gap:9px}
+.deck-row{gap:13px;padding:13px 15px;border-radius:14px}
+.library-tree-row{column-gap:11px}
+.deck-name-button,.folder-toggle-button{font-size:.98rem;font-weight:600;letter-spacing:-.01em}
+.deck-info,.folder-info{gap:8px;margin-top:5px;font-size:.79rem;line-height:1.25}
+.progress-track{height:5px;max-width:310px;margin-top:8px}
+.library-deck-row{box-shadow:0 3px 10px rgba(17,24,39,.035)}
+.folder-row{box-shadow:none}
+.action-button{font-weight:600}
+.action-button.icon-only,.folder-row-actions .action-button{width:32px;min-width:32px;height:32px;min-height:32px;font-size:.86rem}
+.library-selection-count{font-weight:600}
+.review-due-badge,.folder-review-due{font-weight:600}
+.visual-folder-progress-track{height:4px;max-width:310px;margin-top:7px}
+.visual-folder-progress-text{white-space:nowrap}
+.visual-folder-review-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);font-size:.72rem;font-weight:600;white-space:nowrap}
+.visual-folder-review-badge.has-due{border-color:color-mix(in srgb,var(--primary) 40%,var(--line));background:color-mix(in srgb,var(--primary) 12%,var(--surface));color:var(--primary)}
+
+/* Preparar estudo: menor, mais limpo e menos carregado */
+.study-config-wrap{width:min(690px,100%)}
+.study-config-heading{margin-bottom:15px}
+.study-config-heading h1,.review-settings-heading h1{font-size:clamp(1.75rem,4.2vw,2.45rem);font-weight:650;margin:3px 0 5px}
+.study-config-card{border-radius:16px}
+.study-setting{position:relative;gap:16px;padding:14px 18px}
+.study-setting-title{font-size:.93rem;font-weight:600}
+.study-setting-help{display:none!important}
+.study-filter-setting{align-items:center}
+.study-filter-options{min-width:225px;gap:6px}
+.study-filter-option{align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:transparent}
+.study-filter-option span{gap:0}
+.study-filter-option strong{font-size:.84rem;font-weight:550}
+.study-filter-option small{font-size:.7rem;font-weight:500}
+.study-quantity-controls{gap:10px}
+.study-config-actions{padding:16px 18px;gap:8px}
+.study-config-card .notice{margin:14px 18px 0}
+
+/* Tooltip temático: explicação só no hover/foco */
+.study-setting[data-study-tooltip],.visual-redo-option[data-study-tooltip]{position:relative}
+.study-setting[data-study-tooltip]::after,.visual-redo-option[data-study-tooltip]::after{content:attr(data-study-tooltip);position:absolute;z-index:80;right:16px;top:calc(100% - 4px);width:min(330px,calc(100vw - 48px));padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--muted);box-shadow:var(--shadow-sm);font-size:.76rem;font-weight:500;line-height:1.4;opacity:0;visibility:hidden;transform:translateY(-3px);pointer-events:none;transition:opacity .12s ease,transform .12s ease,visibility .12s ease}
+.study-setting[data-study-tooltip]:hover::after,.study-setting[data-study-tooltip]:focus-within::after,.visual-redo-option[data-study-tooltip]:hover::after,.visual-redo-option[data-study-tooltip]:focus-within::after{opacity:1;visibility:visible;transform:translateY(0)}
+
+/* Controles circulares (filtros, Fazer todos e Refazer) */
+.study-filter-option input,.check-option input,.visual-redo-option input{appearance:none;-webkit-appearance:none;width:17px;height:17px;min-width:17px;border-radius:999px;border:1.5px solid #a8b0bd;background:#f3f4f6;display:grid;place-items:center;cursor:pointer;margin:0;transition:background .15s ease,border-color .15s ease,box-shadow .15s ease}
+.study-filter-option input::after,.check-option input::after,.visual-redo-option input::after{content:"";width:5px;height:5px;border-radius:999px;background:#fff;transform:scale(0);transition:transform .12s ease}
+.study-filter-option input:checked,.check-option input:checked,.visual-redo-option input:checked{background:var(--primary);border-color:var(--primary)}
+.study-filter-option input:checked::after,.check-option input:checked::after,.visual-redo-option input:checked::after{transform:scale(1)}
+html[data-theme="dark"] .study-filter-option input,html[data-theme="dark"] .check-option input,html[data-theme="dark"] .visual-redo-option input{background:#515b6b;border-color:#7a8597}
+html[data-theme="dark"] .study-filter-option input:checked,html[data-theme="dark"] .check-option input:checked,html[data-theme="dark"] .visual-redo-option input:checked{background:var(--primary);border-color:var(--primary)}
+.check-option{font-weight:550;font-size:.85rem}
+
+/* Quantidade no modelo número / total */
+.visual-quantity-value{display:inline-flex;align-items:baseline;gap:3px;min-height:40px;padding:6px 10px;border-radius:10px;background:var(--surface-2);border:1px solid color-mix(in srgb,var(--primary) 18%,var(--line));font-variant-numeric:tabular-nums}
+.visual-quantity-value .study-count-input{width:4.2ch;min-height:26px;padding:0;border:0;border-radius:0;background:transparent;color:var(--primary);box-shadow:none!important;text-align:right;font-size:1.12rem;font-weight:650;appearance:textfield;-moz-appearance:textfield}
+.visual-quantity-value .study-count-input::-webkit-inner-spin-button,.visual-quantity-value .study-count-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.visual-quantity-slash{color:var(--muted);font-size:.82rem}
+.visual-quantity-total{color:var(--muted);font-size:.76rem;font-weight:500}
+
+/* Refazer como disclosure, sem alavanca */
+.visual-core-redo-toggle,.visual-core-redo-options{display:none!important}
+.visual-redo-setting{cursor:pointer}
+.visual-redo-setting .visual-redo-heading{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px}
+.visual-redo-chevron{border:0;background:transparent;color:var(--muted);font-size:.9rem;cursor:pointer;padding:4px 2px}
+.visual-redo-panel{display:none;padding:9px 18px 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface-2) 55%,transparent);gap:6px}
+.visual-redo-panel.is-open{display:grid}
+.visual-redo-option{display:flex;align-items:center;gap:9px;min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);cursor:pointer;color:var(--text);font-size:.84rem;font-weight:550}
+.visual-redo-option:hover{border-color:color-mix(in srgb,var(--primary) 38%,var(--line))}
+
+/* Flashcard em estudo */
+.study-card{position:relative;text-align:center;padding-top:54px}
+.study-card>.study-face-label{position:absolute;top:18px;left:22px;margin:0;width:auto;text-align:left;font-weight:650}
+.study-card-content{text-align:center;font-weight:400}
+.study-back-section{position:relative;padding-top:34px}
+.study-back-section>.study-face-label{position:absolute;top:5px;left:0;margin:0;text-align:left;font-weight:650}
+.study-rating-area{width:min(800px,100%);margin:14px auto 0;grid-template-columns:minmax(158px,1.12fr) repeat(4,minmax(0,1fr));gap:7px}
+.rating-button{min-height:58px;padding:7px 9px;font-weight:600;gap:3px}
+.rating-medium{color:#fff!important}
+.rating-title{font-weight:600;line-height:1.12}
+.rating-interval{font-size:.68rem;font-weight:500;opacity:.88}
+.rating-key{font-weight:600}
+.rating-repeat .rating-title{white-space:nowrap}
+.study-timer,.study-progress{font-weight:600}
+
+@media(max-width:760px){.brand-logo-official{width:158px;max-height:38px}.version-badge{display:none}.deck-row{padding:11px 12px}.study-setting{padding:13px 15px}.study-filter-setting{align-items:flex-start}.study-rating-area{grid-template-columns:repeat(2,minmax(0,1fr));padding-bottom:58px}.rating-repeat{grid-column:1/-1}.rating-repeat .rating-title{white-space:normal}.study-card>.study-face-label{top:15px;left:18px}.study-card{padding-top:50px}.study-setting[data-study-tooltip]::after,.visual-redo-option[data-study-tooltip]::after{right:10px;left:10px;width:auto}}
