@@ -231,6 +231,7 @@
           <strong>Anotação</strong>
           <div class="annotation-viewer-header-actions">
             <button class="annotation-viewer-edit" type="button">Editar</button>
+            <button class="study-annotation-button annotation-viewer-delete" type="button">Excluir</button>
             <button class="annotation-viewer-close" type="button" aria-label="Fechar anotação">×</button>
           </div>
         </header>
@@ -444,6 +445,20 @@
     $("#annotationViewer").classList.remove("hidden");
   }
 
+  async function deleteAnnotation(cardId = viewerCardId) {
+    if (!cardId) return;
+    if (!window.confirm("Excluir a anotação deste flashcard?")) return;
+
+    await OituDB.updateCard(cardId, {
+      annotationHtml: "",
+      annotationUpdatedAt: null
+    });
+    presenceOverrides.set(cardId, false);
+    if (editingCardId === cardId) closeEditor();
+    closeViewer();
+    scheduleSync();
+  }
+
   function readFileAsImage(file) {
     if (!file?.type?.startsWith("image/")) {
       alert("Selecione um arquivo de imagem.");
@@ -558,6 +573,11 @@
       }
       if (target.closest(".annotation-viewer-close")) {
         closeViewer();
+        return;
+      }
+      if (target.closest(".annotation-viewer-delete")) {
+        event.preventDefault();
+        if (viewerCardId) deleteAnnotation(viewerCardId);
         return;
       }
       if (target.closest(".annotation-viewer-edit")) {
