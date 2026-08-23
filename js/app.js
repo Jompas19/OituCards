@@ -248,6 +248,16 @@
     showToast("Alteração salva.");
   }
 
+  function loadStudyModule() {
+    if (document.querySelector('script[data-oitucards-study]')) return;
+
+    const script = document.createElement("script");
+    script.src = "js/study.js";
+    script.dataset.oitucardsStudy = "true";
+    script.onerror = () => console.error("Não foi possível carregar o módulo de estudo.");
+    document.body.appendChild(script);
+  }
+
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("oitucards-theme", theme);
@@ -416,6 +426,7 @@
     initTheme();
     OituEditor.init();
     bindEvents();
+    loadStudyModule();
 
     try {
       await OituDB.openDB();
