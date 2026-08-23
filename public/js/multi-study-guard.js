@@ -1,11 +1,45 @@
 (function () {
-  function loadLibraryPerformance() {
-    if (document.querySelector('script[data-oitucards-library-performance]')) return;
+  function loadLargeReadOptimizer(next = () => {}) {
+    const existing = document.querySelector('script[data-oitucards-large-read-optimizer]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") next();
+      else existing.addEventListener("load", next, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/large-read-optimizer.js?v=20260823-1748";
+    script.dataset.oitucardsLargeReadOptimizer = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      next();
+    }, { once: true });
+    script.onerror = () => {
+      console.error("Não foi possível carregar a leitura otimizada de baralhos grandes.");
+      next();
+    };
+    document.body.appendChild(script);
+  }
+
+  function loadLibraryPerformance(next = () => {}) {
+    const existing = document.querySelector('script[data-oitucards-library-performance]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadLargeReadOptimizer(next);
+      else existing.addEventListener("load", () => loadLargeReadOptimizer(next), { once: true });
+      return;
+    }
     const script = document.createElement("script");
     script.async = false;
     script.src = "js/large-library-performance.js?v=20260823-1738";
     script.dataset.oitucardsLibraryPerformance = "true";
-    script.onerror = () => console.error("Não foi possível carregar as otimizações da biblioteca.");
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      loadLargeReadOptimizer(next);
+    }, { once: true });
+    script.onerror = () => {
+      console.error("Não foi possível carregar as otimizações da biblioteca.");
+      next();
+    };
     document.body.appendChild(script);
   }
 
@@ -140,13 +174,12 @@
     document.body.appendChild(script);
   }
 
-  loadLibraryPerformance();
+  loadLibraryPerformance(loadStudyAnnotations);
   loadLibraryStability();
   loadStudyExitFlow();
   loadExport();
   loadMobileCompat(loadVisualRefinement);
   loadAnimations();
-  loadStudyAnnotations();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
