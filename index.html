@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#111827" />
+  <title>OituCards</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand-wrap">
+        <button id="homeButton" class="brand-button" type="button" aria-label="Ir para a página inicial">
+          <span class="brand-mark">O</span>
+          <span class="brand-name">OituCards</span>
+        </button>
+        <span class="version-badge">v1</span>
+      </div>
+      <button id="themeToggle" class="icon-button" type="button" aria-label="Alternar tema" title="Alternar tema">◐</button>
+    </header>
+
+    <main class="shell">
+      <section id="homeView" class="view active">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Biblioteca</p>
+            <h1>Meus baralhos</h1>
+            <p class="subtitle">Crie seus próprios flashcards e organize seus estudos do seu jeito.</p>
+          </div>
+          <div class="heading-actions">
+            <button id="addDeckButton" class="button primary" type="button">+ Criar baralho</button>
+            <button id="importDeckButton" class="button secondary" type="button">Importar baralho</button>
+          </div>
+        </div>
+
+        <div id="deckList" class="deck-list" aria-live="polite"></div>
+
+        <div id="emptyState" class="empty-state hidden">
+          <div class="empty-icon">▤</div>
+          <h2>Você ainda não possui baralhos.</h2>
+          <p>Crie seu primeiro baralho para começar a adicionar flashcards.</p>
+          <button id="emptyAddDeckButton" class="button primary" type="button">+ Criar baralho</button>
+        </div>
+      </section>
+
+      <section id="deckView" class="view">
+        <div class="breadcrumb">
+          <button id="backHomeButton" class="link-button" type="button">← Meus baralhos</button>
+        </div>
+
+        <div class="page-heading deck-heading">
+          <div class="deck-title-block">
+            <p class="eyebrow">Editar baralho</p>
+            <div class="deck-title-row">
+              <h1 id="deckTitle">Baralho</h1>
+              <button id="renameDeckButton" class="icon-button small" type="button" title="Renomear baralho" aria-label="Renomear baralho">✎</button>
+            </div>
+            <p id="deckMeta" class="subtitle"></p>
+          </div>
+          <div class="heading-actions">
+            <button id="addCardButton" class="button primary" type="button">+ Adicionar flashcard</button>
+          </div>
+        </div>
+
+        <div class="card-search-row">
+          <label class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="cardSearchInput" type="search" placeholder="Pesquisar pela frente do flashcard..." />
+          </label>
+        </div>
+
+        <div id="cardList" class="compact-card-list" aria-live="polite"></div>
+
+        <div id="deckEmptyState" class="empty-state compact hidden">
+          <div class="empty-icon">✦</div>
+          <h2>Este baralho ainda está vazio.</h2>
+          <p>Adicione seu primeiro flashcard.</p>
+          <button id="deckEmptyAddCardButton" class="button primary" type="button">+ Adicionar flashcard</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="deckModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="deckModalTitle">
+    <div class="modal small-modal">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Baralho</p>
+          <h2 id="deckModalTitle">Novo baralho</h2>
+        </div>
+        <button class="icon-button modal-close" data-close-modal="deckModal" type="button" aria-label="Fechar">×</button>
+      </div>
+      <form id="deckForm">
+        <label class="field-label" for="deckNameInput">Nome do baralho</label>
+        <input id="deckNameInput" class="text-input" type="text" maxlength="120" autocomplete="off" placeholder="Ex.: Neurocirurgia" required />
+        <div class="modal-actions">
+          <button class="button ghost" data-close-modal="deckModal" type="button">Cancelar</button>
+          <button id="deckSubmitButton" class="button primary" type="submit">Criar baralho</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="cardModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
+    <div class="modal card-modal">
+      <div class="modal-header sticky">
+        <div>
+          <p class="eyebrow">Flashcard</p>
+          <h2 id="cardModalTitle">Novo flashcard</h2>
+        </div>
+        <button class="icon-button modal-close" data-card-action="cancel" type="button" aria-label="Fechar">×</button>
+      </div>
+
+      <div class="editor-sections">
+        <section class="editor-section">
+          <div class="editor-label-row">
+            <label class="field-label">Frente</label>
+            <span class="field-hint">Pergunta, conceito ou comando</span>
+          </div>
+
+          <div class="editor-shell" data-editor-shell="front">
+            <div class="toolbar" data-toolbar-for="front">
+              <button class="tool-button" type="button" data-cmd="bold" title="Negrito"><strong>B</strong></button>
+              <button class="tool-button" type="button" data-cmd="italic" title="Itálico"><em>I</em></button>
+              <button class="tool-button underline" type="button" data-cmd="underline" title="Sublinhado">U</button>
+              <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
+              <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
+
+              <div class="color-control labeled-color-control" data-color-control="foreColor">
+                <span class="color-control-label">Texto:</span>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
+                <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
+                  <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
+                  <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
+                  <button type="button" class="color-dot blue" data-color="#2563eb" aria-label="Azul" title="Azul"></button>
+                  <button type="button" class="color-dot green" data-color="#16a34a" aria-label="Verde" title="Verde"></button>
+                  <button type="button" class="color-dot yellow" data-color="#facc15" aria-label="Amarelo" title="Amarelo"></button>
+                  <button type="button" class="color-dot pink" data-color="#ec4899" aria-label="Rosa" title="Rosa"></button>
+                  <button type="button" class="color-dot red" data-color="#dc2626" aria-label="Vermelho" title="Vermelho"></button>
+                </div>
+              </div>
+
+              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+                <span class="color-control-label">Fundo:</span>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
+                <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
+                  <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
+                  <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
+                  <button type="button" class="color-dot blue" data-color="#2563eb" aria-label="Azul" title="Azul"></button>
+                  <button type="button" class="color-dot green" data-color="#16a34a" aria-label="Verde" title="Verde"></button>
+                  <button type="button" class="color-dot yellow" data-color="#facc15" aria-label="Amarelo" title="Amarelo"></button>
+                  <button type="button" class="color-dot pink" data-color="#ec4899" aria-label="Rosa" title="Rosa"></button>
+                  <button type="button" class="color-dot red" data-color="#dc2626" aria-label="Vermelho" title="Vermelho"></button>
+                </div>
+              </div>
+
+              <button class="tool-button image-tool" type="button" data-image-for="front">🖼 Imagem</button>
+              <input class="hidden image-input" type="file" accept="image/*" data-image-input="front" />
+            </div>
+            <div id="frontEditor" class="rich-editor" contenteditable="true" data-placeholder="Digite a frente do flashcard..." spellcheck="true"></div>
+          </div>
+        </section>
+
+        <section class="editor-section">
+          <div class="editor-label-row">
+            <label class="field-label">Verso</label>
+            <span class="field-hint">Resposta, explicação ou complemento</span>
+          </div>
+
+          <div class="editor-shell" data-editor-shell="back">
+            <div class="toolbar" data-toolbar-for="back">
+              <button class="tool-button" type="button" data-cmd="bold" title="Negrito"><strong>B</strong></button>
+              <button class="tool-button" type="button" data-cmd="italic" title="Itálico"><em>I</em></button>
+              <button class="tool-button underline" type="button" data-cmd="underline" title="Sublinhado">U</button>
+              <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
+              <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
+
+              <div class="color-control labeled-color-control" data-color-control="foreColor">
+                <span class="color-control-label">Texto:</span>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
+                <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
+                  <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
+                  <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
+                  <button type="button" class="color-dot blue" data-color="#2563eb" aria-label="Azul" title="Azul"></button>
+                  <button type="button" class="color-dot green" data-color="#16a34a" aria-label="Verde" title="Verde"></button>
+                  <button type="button" class="color-dot yellow" data-color="#facc15" aria-label="Amarelo" title="Amarelo"></button>
+                  <button type="button" class="color-dot pink" data-color="#ec4899" aria-label="Rosa" title="Rosa"></button>
+                  <button type="button" class="color-dot red" data-color="#dc2626" aria-label="Vermelho" title="Vermelho"></button>
+                </div>
+              </div>
+
+              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+                <span class="color-control-label">Fundo:</span>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
+                <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
+                  <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
+                  <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
+                  <button type="button" class="color-dot blue" data-color="#2563eb" aria-label="Azul" title="Azul"></button>
+                  <button type="button" class="color-dot green" data-color="#16a34a" aria-label="Verde" title="Verde"></button>
+                  <button type="button" class="color-dot yellow" data-color="#facc15" aria-label="Amarelo" title="Amarelo"></button>
+                  <button type="button" class="color-dot pink" data-color="#ec4899" aria-label="Rosa" title="Rosa"></button>
+                  <button type="button" class="color-dot red" data-color="#dc2626" aria-label="Vermelho" title="Vermelho"></button>
+                </div>
+              </div>
+
+              <button class="tool-button image-tool" type="button" data-image-for="back">🖼 Imagem</button>
+              <input class="hidden image-input" type="file" accept="image/*" data-image-input="back" />
+            </div>
+            <div id="backEditor" class="rich-editor" contenteditable="true" data-placeholder="Digite o verso do flashcard..." spellcheck="true"></div>
+          </div>
+        </section>
+      </div>
+
+      <div id="createCardActions" class="modal-actions card-actions">
+        <button class="button primary" type="button" data-card-action="add">Adicionar</button>
+        <button class="button secondary" type="button" data-card-action="add-close">Adicionar e fechar</button>
+        <button class="button ghost" type="button" data-card-action="cancel">Cancelar</button>
+      </div>
+
+      <div id="editCardActions" class="modal-actions card-actions hidden">
+        <button class="button ghost" type="button" data-card-action="cancel">Cancelar</button>
+        <button class="button primary" type="button" data-card-action="save-edit">Salvar alteração</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="importModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
+    <div class="modal small-modal">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Importação</p>
+          <h2 id="importModalTitle">Importar baralho</h2>
+        </div>
+        <button class="icon-button modal-close" data-close-modal="importModal" type="button" aria-label="Fechar">×</button>
+      </div>
+
+      <div class="notice">
+        <strong>Estrutura preparada.</strong>
+        <p>O importador será adicionado em uma atualização futura. O objetivo é oferecer compatibilidade com <code>.apkg</code> e outros formatos sem alterar o restante do site.</p>
+      </div>
+
+      <label class="upload-placeholder">
+        <span class="upload-icon">⇧</span>
+        <strong>Importação ainda não habilitada na V1</strong>
+        <span>APKG • CSV • JSON</span>
+      </label>
+
+      <div class="modal-actions">
+        <button class="button primary" data-close-modal="importModal" type="button">Entendi</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirmModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal tiny-modal">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Confirmação</p>
+          <h2 id="confirmTitle">Confirmar ação</h2>
+        </div>
+      </div>
+      <p id="confirmMessage" class="confirm-message"></p>
+      <div class="modal-actions">
+        <button id="confirmCancel" class="button ghost" type="button">Cancelar</button>
+        <button id="confirmAccept" class="button danger" type="button">Excluir</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="js/db.js"></script>
+  <script src="js/editor.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
