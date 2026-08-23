@@ -43,7 +43,7 @@
     if (document.querySelector('script[data-oitucards-visual-polish]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/visual-polish-lite.js?v=20260823-1607";
+    script.src = "js/visual-polish-lite.js?v=20260823-1617";
     script.dataset.oitucardsVisualPolish = "true";
     script.onerror = () => console.error("Não foi possível carregar os ajustes finos de interface.");
     document.body.appendChild(script);
