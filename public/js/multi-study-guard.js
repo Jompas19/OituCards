@@ -49,11 +49,22 @@
     document.body.appendChild(script);
   }
 
+  function releaseMobileVisualPatch() {
+    window.OituMobileCompat?.releaseVisualObserverPatch?.();
+  }
+
   function loadVisualRefinement() {
     const existing = document.querySelector('script[data-oitucards-visual-refinement]');
     if (existing) {
-      if (existing.dataset.loaded === "true") loadVisualPolish();
-      else existing.addEventListener("load", loadVisualPolish, { once: true });
+      if (existing.dataset.loaded === "true") {
+        releaseMobileVisualPatch();
+        loadVisualPolish();
+      } else {
+        existing.addEventListener("load", () => {
+          releaseMobileVisualPatch();
+          loadVisualPolish();
+        }, { once: true });
+      }
       return;
     }
 
@@ -63,11 +74,48 @@
     script.dataset.oitucardsVisualRefinement = "true";
     script.addEventListener("load", () => {
       script.dataset.loaded = "true";
+      releaseMobileVisualPatch();
       loadVisualPolish();
     }, { once: true });
     script.onerror = () => {
+      releaseMobileVisualPatch();
       console.error("Não foi possível carregar o refinamento visual.");
       loadVisualPolish();
+    };
+    document.body.appendChild(script);
+  }
+
+  function isMobileTouchRuntime() {
+    const coarsePointer = window.matchMedia?.('(pointer: coarse)')?.matches || false;
+    const narrowScreen = window.matchMedia?.('(max-width: 900px)')?.matches || window.innerWidth <= 900;
+    const hasTouch = Number(navigator.maxTouchPoints || 0) > 0 || 'ontouchstart' in window;
+    return coarsePointer || (hasTouch && narrowScreen);
+  }
+
+  function loadMobileCompat(next) {
+    if (!isMobileTouchRuntime()) {
+      next();
+      return;
+    }
+
+    const existing = document.querySelector('script[data-oitucards-mobile-compat]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") next();
+      else existing.addEventListener("load", next, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/mobile-compat.js?v=20260823-1714";
+    script.dataset.oitucardsMobileCompat = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      next();
+    }, { once: true });
+    script.onerror = () => {
+      console.error("Não foi possível carregar a compatibilidade mobile.");
+      next();
     };
     document.body.appendChild(script);
   }
@@ -96,7 +144,7 @@
   loadLibraryStability();
   loadStudyExitFlow();
   loadExport();
-  loadVisualRefinement();
+  loadMobileCompat(loadVisualRefinement);
   loadAnimations();
   loadStudyAnnotations();
 

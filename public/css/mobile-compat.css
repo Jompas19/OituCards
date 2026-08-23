@@ -1,0 +1,60 @@
+/* OituCards — compatibilidade exclusiva para celular/tablet touch. */
+
+html.oc-mobile-runtime button,
+html.oc-mobile-runtime input[type="checkbox"],
+html.oc-mobile-runtime input[type="radio"],
+html.oc-mobile-runtime .study-card,
+html.oc-mobile-runtime .study-filter-option,
+html.oc-mobile-runtime .check-option,
+html.oc-mobile-runtime .redo-option,
+html.oc-mobile-runtime .library-choice,
+html.oc-mobile-runtime .folder-toggle-button,
+html.oc-mobile-runtime .deck-name-button,
+html.oc-mobile-runtime [role="button"]{
+  touch-action:manipulation;
+  -webkit-tap-highlight-color:transparent;
+}
+
+html.oc-mobile-runtime .study-card,
+html.oc-mobile-runtime .rating-button,
+html.oc-mobile-runtime .study-nav-button,
+html.oc-mobile-runtime .study-annotation-button{
+  touch-action:manipulation;
+}
+
+@media(max-width:760px){
+  html.oc-mobile-runtime .modal-backdrop,
+  html.oc-mobile-runtime .annotation-backdrop{
+    min-height:100vh;
+    min-height:100dvh;
+  }
+
+  html.oc-mobile-runtime .modal,
+  html.oc-mobile-runtime .small-modal,
+  html.oc-mobile-runtime .tiny-modal{
+    min-height:100vh;
+    min-height:100dvh;
+    max-height:100vh;
+    max-height:100dvh;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+  }
+
+  html.oc-mobile-runtime .study-nav-button{
+    bottom:calc(14px + env(safe-area-inset-bottom,0px));
+  }
+
+  html.oc-mobile-runtime .study-rating-area{
+    padding-bottom:calc(64px + env(safe-area-inset-bottom,0px));
+  }
+
+  html.oc-mobile-runtime .annotation-editor-panel{
+    max-height:calc(100vh - 16px);
+    max-height:calc(100dvh - 16px);
+  }
+
+  html.oc-mobile-runtime .annotation-viewer{
+    bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  }
+}
