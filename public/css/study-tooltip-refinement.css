@@ -1,0 +1,62 @@
+/* OituCards — refinamento isolado dos tooltips do preparo de estudo. */
+
+/* Linhas com explicação fixa nunca exibem tooltip. */
+.visual-fixed-helper-row::after,
+.visual-fixed-helper-row .visual-option-help::after{
+  content:none!important;
+  display:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+}
+
+@media (hover:hover) and (pointer:fine){
+  /* Tooltips principais: começam mais perto do texto e usam apenas a largura necessária. */
+  .study-config-card .visual-help-row::after{
+    left:31%;
+    right:auto;
+    top:50%;
+    width:max-content;
+    max-width:min(320px,calc(69% - 72px));
+    max-height:calc(100% - 8px);
+    box-sizing:border-box;
+    padding:5px 8px;
+    overflow:hidden;
+    line-height:1.16;
+    white-space:normal;
+    transform:translate(4px,-50%);
+  }
+  .study-config-card .visual-help-row:hover::after{
+    transform:translate(0,-50%);
+  }
+
+  /* Refazer baralho reserva apenas o espaço necessário para o chevron. */
+  .study-config-card .redo-setting.visual-help-row::after{
+    left:30%;
+    max-width:min(330px,calc(70% - 50px));
+  }
+
+  /* Opções internas: balão contido no próprio retângulo, sem invadir a opção vizinha. */
+  .study-config-card .redo-option.visual-option-help{
+    overflow:hidden;
+  }
+  .study-config-card .redo-option.visual-option-help::after{
+    left:34%;
+    right:auto;
+    top:50%;
+    width:max-content;
+    max-width:calc(66% - 8px);
+    max-height:calc(100% - 8px);
+    box-sizing:border-box;
+    padding:3px 5px;
+    overflow:hidden;
+    font-size:.66rem;
+    line-height:1.08;
+    white-space:normal;
+    transform:translate(3px,-50%);
+    display:block;
+    -webkit-line-clamp:unset;
+  }
+  .study-config-card .redo-option.visual-option-help:hover::after{
+    transform:translate(0,-50%);
+  }
+}
