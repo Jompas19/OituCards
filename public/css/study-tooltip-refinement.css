@@ -1,62 +1,143 @@
 /* OituCards — refinamento isolado dos tooltips do preparo de estudo. */
 
-/* Linhas com explicação fixa nunca exibem tooltip. */
+/* Linhas sem tooltip permanecem totalmente silenciosas. */
 .visual-fixed-helper-row::after,
-.visual-fixed-helper-row .visual-option-help::after{
+.visual-fixed-helper-row .visual-option-help::after,
+.study-config-card .visual-inline-help-row::after,
+.study-config-card .redo-option.visual-option-help::after{
   content:none!important;
   display:none!important;
   opacity:0!important;
   visibility:hidden!important;
 }
 
+/* O título vira a referência real do balão: a ajuda nasce depois da última palavra. */
+.study-config-card .study-setting-title{
+  position:relative;
+}
+.visual-inline-help-anchor{
+  position:relative;
+  display:inline-block;
+  width:0;
+  height:1em;
+  margin-left:14px;
+  vertical-align:middle;
+  pointer-events:none;
+}
+.visual-inline-help-anchor::after{
+  content:attr(data-visual-help);
+  position:absolute;
+  left:18px;
+  top:50%;
+  width:max-content;
+  max-width:min(300px,42vw);
+  box-sizing:border-box;
+  padding:5px 8px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface);
+  color:var(--muted);
+  box-shadow:var(--shadow-sm);
+  font-size:.75rem;
+  font-weight:450;
+  line-height:1.2;
+  white-space:normal;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  transform:translate(4px,-50%);
+  transition:opacity .12s ease,transform .12s ease,visibility .12s ease;
+  z-index:90;
+}
+
+/* Ajuda exclusiva das duas opções de Refazer baralho. */
+.redo-help-icon{
+  position:relative;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:17px;
+  height:17px;
+  min-width:17px;
+  margin-left:7px;
+  border:1px solid color-mix(in srgb,var(--muted) 72%,var(--line));
+  border-radius:999px;
+  color:var(--muted);
+  background:transparent;
+  font-size:.68rem;
+  font-weight:700;
+  line-height:1;
+  cursor:help;
+  vertical-align:middle;
+  z-index:4;
+}
+.redo-help-icon::after{
+  content:attr(data-visual-help);
+  position:absolute;
+  left:calc(100% + 9px);
+  top:50%;
+  width:max-content;
+  max-width:230px;
+  box-sizing:border-box;
+  padding:6px 8px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface);
+  color:var(--muted);
+  box-shadow:var(--shadow-sm);
+  font-size:.72rem;
+  font-weight:450;
+  line-height:1.2;
+  white-space:normal;
+  opacity:0;
+  visibility:hidden;
+  pointer-events:none;
+  transform:translate(4px,-50%);
+  transition:opacity .12s ease,transform .12s ease,visibility .12s ease;
+  z-index:120;
+}
+.study-config-card .redo-option{
+  overflow:visible!important;
+}
+
+/* Quantidade: sem tooltip e sem frase fixa adicional. */
+.visual-quantity-fixed-hint{
+  display:none!important;
+}
+
 @media (hover:hover) and (pointer:fine){
-  /* Tooltips principais: começam mais perto do texto e usam apenas a largura necessária. */
-  .study-config-card .visual-help-row::after{
-    left:31%;
-    right:auto;
-    top:50%;
-    width:max-content;
-    max-width:min(320px,calc(69% - 72px));
-    max-height:calc(100% - 8px);
-    box-sizing:border-box;
-    padding:5px 8px;
-    overflow:hidden;
-    line-height:1.16;
-    white-space:normal;
-    transform:translate(4px,-50%);
-  }
-  .study-config-card .visual-help-row:hover::after{
+  .visual-inline-help-row:hover .visual-inline-help-anchor::after{
+    opacity:1;
+    visibility:visible;
     transform:translate(0,-50%);
   }
-
-  /* Refazer baralho reserva apenas o espaço necessário para o chevron. */
-  .study-config-card .redo-setting.visual-help-row::after{
-    left:30%;
-    max-width:min(330px,calc(70% - 50px));
-  }
-
-  /* Opções internas: balão contido no próprio retângulo, sem invadir a opção vizinha. */
-  .study-config-card .redo-option.visual-option-help{
-    overflow:hidden;
-  }
-  .study-config-card .redo-option.visual-option-help::after{
-    left:34%;
-    right:auto;
-    top:50%;
-    width:max-content;
-    max-width:calc(66% - 8px);
-    max-height:calc(100% - 8px);
-    box-sizing:border-box;
-    padding:3px 5px;
-    overflow:hidden;
-    font-size:.66rem;
-    line-height:1.08;
-    white-space:normal;
-    transform:translate(3px,-50%);
-    display:block;
-    -webkit-line-clamp:unset;
-  }
-  .study-config-card .redo-option.visual-option-help:hover::after{
+  .redo-help-icon:hover::after,
+  .redo-help-icon:focus-visible::after{
+    opacity:1;
+    visibility:visible;
     transform:translate(0,-50%);
+  }
+}
+
+/* Em toque, nenhuma ajuda dependente de hover fica presa na tela. */
+@media (hover:none), (pointer:coarse){
+  .visual-inline-help-anchor::after,
+  .redo-help-icon::after{
+    display:none!important;
+    opacity:0!important;
+    visibility:hidden!important;
+  }
+}
+
+@media(max-width:760px){
+  .visual-inline-help-anchor::after{
+    max-width:min(240px,54vw);
+  }
+}
+
+@media(prefers-reduced-motion:reduce){
+  .visual-inline-help-anchor::after,
+  .redo-help-icon::after{
+    transition:none;
   }
 }
