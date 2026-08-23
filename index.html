@@ -21,6 +21,7 @@
     </header>
 
     <main class="shell">
+      <!-- HOME -->
       <section id="homeView" class="view active">
         <div class="page-heading">
           <div>
@@ -44,6 +45,7 @@
         </div>
       </section>
 
+      <!-- DECK EDITOR -->
       <section id="deckView" class="view">
         <div class="breadcrumb">
           <button id="backHomeButton" class="link-button" type="button">← Meus baralhos</button>
@@ -82,6 +84,7 @@
     </main>
   </div>
 
+  <!-- MODAL: NOVO BARALHO -->
   <div id="deckModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="deckModalTitle">
     <div class="modal small-modal">
       <div class="modal-header">
@@ -102,6 +105,7 @@
     </div>
   </div>
 
+  <!-- MODAL: EDITOR DE FLASHCARD -->
   <div id="cardModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="cardModalTitle">
     <div class="modal card-modal">
       <div class="modal-header sticky">
@@ -127,9 +131,11 @@
               <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
               <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
 
-              <div class="color-control labeled-color-control" data-color-control="foreColor">
+                                          <div class="color-control labeled-color-control" data-color-control="foreColor">
                 <span class="color-control-label">Texto:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto">
+                  <span class="color-word">Cor</span>
+                </button>
                 <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -141,9 +147,11 @@
                 </div>
               </div>
 
-              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+                                          <div class="color-control labeled-color-control" data-color-control="hiliteColor">
                 <span class="color-control-label">Fundo:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto">
+                  <span class="color-word">Cor</span>
+                </button>
                 <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -176,9 +184,11 @@
               <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
               <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
 
-              <div class="color-control labeled-color-control" data-color-control="foreColor">
+                                          <div class="color-control labeled-color-control" data-color-control="foreColor">
                 <span class="color-control-label">Texto:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto">
+                  <span class="color-word">Cor</span>
+                </button>
                 <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -190,9 +200,11 @@
                 </div>
               </div>
 
-              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+                                          <div class="color-control labeled-color-control" data-color-control="hiliteColor">
                 <span class="color-control-label">Fundo:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto">
+                  <span class="color-word">Cor</span>
+                </button>
                 <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -225,6 +237,7 @@
     </div>
   </div>
 
+  <!-- MODAL: IMPORTAÇÃO -->
   <div id="importModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="importModalTitle">
     <div class="modal small-modal">
       <div class="modal-header">
@@ -252,6 +265,7 @@
     </div>
   </div>
 
+  <!-- MODAL: CONFIRMAÇÃO -->
   <div id="confirmModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
     <div class="modal tiny-modal">
       <div class="modal-header">
