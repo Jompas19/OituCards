@@ -14,7 +14,7 @@
     if (!document.querySelector('link[data-oitucards-study-tooltip-refinement-css]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = 'css/study-tooltip-refinement.css?v=20260823-1617';
+      link.href = 'css/study-tooltip-refinement.css?v=20260823-1626';
       link.dataset.oitucardsStudyTooltipRefinementCss = 'true';
       document.head.appendChild(link);
     }
@@ -111,15 +111,23 @@
       const label = strong?.textContent?.trim().toLowerCase() || '';
       if (!strong) return;
 
-      let help = $('.redo-help-icon', tile);
+      let titleLine = $('.redo-title-help', tile);
+      if (!titleLine) {
+        titleLine = document.createElement('span');
+        titleLine.className = 'redo-title-help';
+        strong.before(titleLine);
+        titleLine.appendChild(strong);
+      }
+
+      let help = $('.redo-help-icon', titleLine) || $('.redo-help-icon', tile);
       if (!help) {
         help = document.createElement('span');
         help.className = 'redo-help-icon';
         help.textContent = '?';
         help.tabIndex = 0;
         help.setAttribute('role', 'img');
-        strong.insertAdjacentElement('afterend', help);
       }
+      if (help.parentElement !== titleLine) titleLine.appendChild(help);
 
       if (label.includes('reiniciar')) {
         help.dataset.visualHelp = 'Zera o progresso e reinicia a agenda dos cards.';
@@ -151,7 +159,18 @@
     return null;
   }
 
+  function captureRedoTileState(event) {
+    if (!(event.target instanceof Element) || event.target.closest('.redo-help-icon')) return;
+    const tile = event.target.closest('.redo-option');
+    if (!tile) return;
+    const radio = $('input[type="radio"]', tile);
+    if (!radio) return;
+    tile.dataset.redoWasChecked = String(radio.checked);
+  }
+
   function handleRedoTileClick(event) {
+    if (!(event.target instanceof Element)) return;
+
     const helpIcon = event.target.closest('.redo-help-icon');
     if (helpIcon) {
       event.preventDefault();
@@ -169,19 +188,25 @@
     const radio = $('input[type="radio"]', tile);
     if (!radio) return;
 
+    const captured = tile.dataset.redoWasChecked;
+    const wasSelected = captured === 'true' ? true : captured === 'false' ? false : radio.checked;
+    const shouldSelect = !wasSelected;
+    delete tile.dataset.redoWasChecked;
+
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const wasSelected = radio.checked;
-    config.options.querySelectorAll(`input[name="${config.groupName}"]`).forEach((item) => {
-      item.checked = false;
+    // Em clique direto no radio, alguns navegadores revertem o estado após preventDefault().
+    // Aplicar no microtask garante o mesmo comportamento clicando no quadrado ou no retângulo.
+    queueMicrotask(() => {
+      config.options.querySelectorAll(`input[name="${config.groupName}"]`).forEach((item) => {
+        item.checked = false;
+      });
+      radio.checked = shouldSelect;
+      config.checkbox.checked = shouldSelect;
+      config.checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      radio.focus({ preventScroll: true });
     });
-
-    if (!wasSelected) radio.checked = true;
-    config.checkbox.checked = !wasSelected;
-
-    config.checkbox.dispatchEvent(new Event('change', { bubbles: true }));
-    radio.focus({ preventScroll: true });
   }
 
   function syncRatingLayout(areaSelector, repeatSelector, hardSelector) {
@@ -212,6 +237,7 @@
   }
 
   function bindEvents() {
+    document.addEventListener('pointerdown', captureRedoTileState, true);
     document.addEventListener('click', handleRedoTileClick, true);
 
     document.addEventListener('change', (event) => {

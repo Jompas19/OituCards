@@ -51,15 +51,27 @@
 }
 
 /* Ajuda exclusiva das duas opções de Refazer baralho. */
+.redo-title-help{
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:7px!important;
+  width:max-content;
+  max-width:100%;
+  white-space:nowrap;
+}
+.redo-title-help strong{
+  display:inline!important;
+  min-width:0;
+}
 .redo-help-icon{
   position:relative;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
   width:17px;
   height:17px;
   min-width:17px;
-  margin-left:7px;
+  margin:0!important;
   border:1px solid color-mix(in srgb,var(--muted) 72%,var(--line));
   border-radius:999px;
   color:var(--muted);
