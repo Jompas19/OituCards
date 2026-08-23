@@ -82,12 +82,23 @@
     document.body.appendChild(script);
   }
 
+  function loadStudyAnnotations() {
+    if (document.querySelector('script[data-oitucards-study-annotations]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/study-annotations.js?v=20260823-1648";
+    script.dataset.oitucardsStudyAnnotations = "true";
+    script.onerror = () => console.error("Não foi possível carregar as anotações dos flashcards.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
   loadExport();
   loadVisualRefinement();
   loadAnimations();
+  loadStudyAnnotations();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
