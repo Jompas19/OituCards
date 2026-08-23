@@ -72,11 +72,22 @@
     document.body.appendChild(script);
   }
 
+  function loadAnimations() {
+    if (document.querySelector('script[data-oitucards-animations]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/animations.js?v=20260823-1525";
+    script.dataset.oitucardsAnimations = "true";
+    script.onerror = () => console.error("Não foi possível carregar as microanimações.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
   loadExport();
   loadVisualRefinement();
+  loadAnimations();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
