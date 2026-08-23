@@ -1,0 +1,52 @@
+/* OituCards — camada opcional e isolada de microanimações. */
+
+/* Temporizador: o núcleo já alterna a classe .paused. */
+.oc-motion-enabled .study-timer{
+  position:relative;
+  transition:color .11s ease,background-color .11s ease,border-color .11s ease,box-shadow .11s ease,transform .11s ease;
+}
+.oc-motion-enabled .study-timer::before{
+  content:"⏸";
+  position:absolute;
+  right:calc(100% + 5px);
+  top:50%;
+  transform:translateY(-50%) scale(.84);
+  opacity:0;
+  color:inherit;
+  font-size:.72rem;
+  line-height:1;
+  pointer-events:none;
+  transition:opacity .1s ease,transform .1s ease;
+}
+@media (hover:hover) and (pointer:fine){
+  .oc-motion-enabled .study-timer:not(.paused):hover::before{
+    opacity:.78;
+    transform:translateY(-50%) scale(1);
+  }
+}
+.oc-motion-enabled .study-timer.paused{
+  color:#d6a514!important;
+  border-color:color-mix(in srgb,#eab308 45%,var(--line))!important;
+  background:color-mix(in srgb,#eab308 11%,var(--surface))!important;
+  box-shadow:0 0 0 1px color-mix(in srgb,#eab308 8%,transparent);
+}
+.oc-motion-enabled .study-timer.paused::before{
+  opacity:1;
+  transform:translateY(-50%) scale(1);
+  color:#d6a514;
+}
+
+/* Pequenas pistas de movimento nos elementos que expandem conteúdo. */
+.oc-motion-enabled .folder-chevron,
+.oc-motion-enabled .visual-redo-chevron{
+  transition:transform .12s ease;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .oc-motion-enabled .study-timer,
+  .oc-motion-enabled .study-timer::before,
+  .oc-motion-enabled .folder-chevron,
+  .oc-motion-enabled .visual-redo-chevron{
+    transition:none!important;
+  }
+}
