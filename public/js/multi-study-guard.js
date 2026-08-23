@@ -76,7 +76,7 @@
     if (document.querySelector('script[data-oitucards-animations]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/animations.js?v=20260823-1525";
+    script.src = "js/animations.js?v=20260823-1542";
     script.dataset.oitucardsAnimations = "true";
     script.onerror = () => console.error("Não foi possível carregar as microanimações.");
     document.body.appendChild(script);

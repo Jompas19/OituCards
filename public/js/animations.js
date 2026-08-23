@@ -1,9 +1,10 @@
 (function () {
-  const MAX_TREE_ROWS = 32;
-  const OPEN_MS = 125;
-  const CLOSE_MS = 90;
-  const VIEW_MS = 135;
-  const REVEAL_MS = 145;
+  const MAX_LAYOUT_ITEMS = 32;
+  const LAYOUT_MS = 210;
+  const VIEW_MS = 190;
+  const REVEAL_MS = 200;
+  const MODAL_MS = 175;
+  const EASE = 'cubic-bezier(.22,.61,.36,1)';
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -31,168 +32,157 @@
     }
   }
 
-  function depthOf(row, variable) {
-    const raw = row?.style?.getPropertyValue(variable) || '0';
-    const value = Number.parseInt(raw, 10);
-    return Number.isFinite(value) ? value : 0;
+  function treeKey(row) {
+    if (row.dataset.folderId) return `folder:${row.dataset.folderId}`;
+    if (row.dataset.deckId) return `deck:${row.dataset.deckId}`;
+    return null;
   }
 
-  function rowsBelowFolder(folderId) {
-    const list = $('#deckList');
-    if (!list) return [];
-    const rows = $$('.library-tree-row', list);
-    const index = rows.findIndex((row) => row.dataset.folderId === folderId);
-    if (index < 0) return [];
-    const baseDepth = depthOf(rows[index], '--tree-depth');
-    const descendants = [];
-    for (let i = index + 1; i < rows.length; i += 1) {
-      const depth = depthOf(rows[i], '--tree-depth');
-      if (depth <= baseDepth) break;
-      descendants.push(rows[i]);
+  function pickerKey(row, index) {
+    if (row.dataset.addPickerFolder) return `folder:${row.dataset.addPickerFolder}`;
+    if (row.dataset.existingDeck) return `deck:${row.dataset.existingDeck}`;
+    if (row.hasAttribute('data-add-picker-root')) return 'root';
+    return `row:${index}`;
+  }
+
+  function captureKeyed(container, selector, keyFor) {
+    const map = new Map();
+    if (!container) return map;
+    $$(selector, container).forEach((el, index) => {
+      const key = keyFor(el, index);
+      if (!key) return;
+      const rect = el.getBoundingClientRect();
+      map.set(key, { el, top: rect.top });
+    });
+    return map;
+  }
+
+  function animateLayout(before, after) {
+    if (!canAnimate()) return;
+    let count = 0;
+
+    for (const [key, current] of after) {
+      if (count >= MAX_LAYOUT_ITEMS) break;
+      const previous = before.get(key);
+
+      if (previous) {
+        const deltaY = previous.top - current.top;
+        if (Math.abs(deltaY) < 0.75) continue;
+        count += 1;
+        animate(
+          current.el,
+          [
+            { transform: `translate3d(0, ${deltaY}px, 0)` },
+            { transform: 'translate3d(0,0,0)' }
+          ],
+          { duration: LAYOUT_MS, easing: EASE }
+        );
+        continue;
+      }
+
+      count += 1;
+      animate(
+        current.el,
+        [
+          { opacity: .35, transform: 'translate3d(0,-3px,0)' },
+          { opacity: 1, transform: 'translate3d(0,0,0)' }
+        ],
+        { duration: LAYOUT_MS, easing: EASE }
+      );
     }
-    return descendants;
   }
 
-  function pickerRowsBelow(button) {
-    const container = button.closest('.library-tree-picker, .library-modal-list');
-    if (!container) return [];
-    const rows = [...container.children];
-    const index = rows.indexOf(button);
-    if (index < 0) return [];
-    const baseDepth = depthOf(button, '--picker-depth');
-    const descendants = [];
-    for (let i = index + 1; i < rows.length; i += 1) {
-      const row = rows[i];
-      const depth = depthOf(row, '--picker-depth');
-      if (row.matches('.library-picker-root') || depth <= baseDepth) break;
-      descendants.push(row);
+  function watchOneMutation(container, selector, keyFor) {
+    if (!canAnimate() || !container) return;
+    const before = captureKeyed(container, selector, keyFor);
+    let finished = false;
+
+    const observer = new MutationObserver(() => finish());
+    const timeoutId = setTimeout(() => {
+      if (!finished) observer.disconnect();
+      finished = true;
+    }, 280);
+
+    function finish() {
+      if (finished) return;
+      finished = true;
+      observer.disconnect();
+      clearTimeout(timeoutId);
+      const after = captureKeyed(container, selector, keyFor);
+      animateLayout(before, after);
     }
-    return descendants;
+
+    observer.observe(container, { childList: true });
   }
 
-  function animateRowsDown(rows) {
-    if (!canAnimate() || !rows.length) return;
-    rows.slice(0, MAX_TREE_ROWS).forEach((row, index) => {
-      animate(row,
-        [{ opacity: 0, transform: 'translateY(-7px)' }, { opacity: 1, transform: 'translateY(0)' }],
-        { duration: OPEN_MS, delay: Math.min(index * 2, 34), easing: 'cubic-bezier(.2,.8,.2,1)' }
+  function captureElementLayout(elements) {
+    const map = new Map();
+    elements.forEach((el) => {
+      if (!(el instanceof Element) || el.classList.contains('hidden')) return;
+      map.set(el, el.getBoundingClientRect().top);
+    });
+    return map;
+  }
+
+  function animatePersistentLayout(before, elements) {
+    if (!canAnimate()) return;
+    let count = 0;
+    elements.forEach((el) => {
+      if (count >= MAX_LAYOUT_ITEMS || !(el instanceof Element) || el.classList.contains('hidden')) return;
+      const oldTop = before.get(el);
+      if (oldTop == null) return;
+      const newTop = el.getBoundingClientRect().top;
+      const deltaY = oldTop - newTop;
+      if (Math.abs(deltaY) < 0.75) return;
+      count += 1;
+      animate(
+        el,
+        [
+          { transform: `translate3d(0, ${deltaY}px, 0)` },
+          { transform: 'translate3d(0,0,0)' }
+        ],
+        { duration: LAYOUT_MS, easing: EASE }
       );
     });
-  }
-
-  function animateRowsUp(rows) {
-    if (!canAnimate() || !rows.length || rows.length > MAX_TREE_ROWS) return false;
-    rows.forEach((row, index) => {
-      animate(row,
-        [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
-        { duration: CLOSE_MS, delay: Math.min(index, 8), easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' }
-      );
-    });
-    return true;
-  }
-
-  function findFolderToggle(folderId) {
-    return $$('[data-toggle-folder]').find((button) => button.dataset.toggleFolder === folderId) || null;
-  }
-
-  function scheduleFolderOpenAnimation(folderId, attempt = 0) {
-    if (!canAnimate() || attempt > 8) return;
-    requestAnimationFrame(() => {
-      const button = findFolderToggle(folderId);
-      if (button?.getAttribute('aria-expanded') === 'true') {
-        animateRowsDown(rowsBelowFolder(folderId));
-        return;
-      }
-      setTimeout(() => scheduleFolderOpenAnimation(folderId, attempt + 1), 16);
-    });
-  }
-
-  function schedulePickerOpenAnimation(folderId, attempt = 0) {
-    if (!canAnimate() || attempt > 5) return;
-    requestAnimationFrame(() => {
-      const button = $$('[data-add-picker-folder]').find((item) => item.dataset.addPickerFolder === folderId);
-      if (button?.getAttribute('aria-expanded') === 'true') {
-        animateRowsDown(pickerRowsBelow(button));
-        return;
-      }
-      setTimeout(() => schedulePickerOpenAnimation(folderId, attempt + 1), 16);
-    });
-  }
-
-  function replayClick(target) {
-    target.dataset.ocMotionPass = 'true';
-    target.click();
   }
 
   function handleCollapsibleClick(event) {
     const folderToggle = event.target.closest('[data-toggle-folder]');
     if (folderToggle) {
-      if (folderToggle.dataset.ocMotionPass === 'true') {
-        delete folderToggle.dataset.ocMotionPass;
-        return;
-      }
-      const folderId = folderToggle.dataset.toggleFolder;
-      const isOpen = folderToggle.getAttribute('aria-expanded') === 'true';
-      if (!isOpen) {
-        scheduleFolderOpenAnimation(folderId);
-        return;
-      }
-      const rows = rowsBelowFolder(folderId);
-      if (!animateRowsUp(rows)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setTimeout(() => replayClick(folderToggle), CLOSE_MS + 8);
+      watchOneMutation($('#deckList'), '.library-tree-row', treeKey);
       return;
     }
 
     const picker = event.target.closest('[data-add-picker-folder]');
     if (picker) {
-      if (picker.dataset.ocMotionPass === 'true') {
-        delete picker.dataset.ocMotionPass;
-        return;
-      }
-      const folderId = picker.dataset.addPickerFolder;
-      const isOpen = picker.getAttribute('aria-expanded') === 'true';
-      if (!isOpen) {
-        schedulePickerOpenAnimation(folderId);
-        return;
-      }
-      const rows = pickerRowsBelow(picker);
-      if (!animateRowsUp(rows)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      setTimeout(() => replayClick(picker), CLOSE_MS + 8);
+      const container = picker.closest('.library-tree-picker, .library-modal-list');
+      watchOneMutation(container, ':scope > *', pickerKey);
       return;
     }
 
     const redoTrigger = event.target.closest('.visual-redo-trigger');
     if (!redoTrigger) return;
-    if (redoTrigger.dataset.ocMotionPass === 'true') {
-      delete redoTrigger.dataset.ocMotionPass;
-      return;
-    }
 
+    const card = redoTrigger.closest('.study-config-card');
+    if (!card) return;
+    const elements = [...card.children];
+    const before = captureElementLayout(elements);
     const options = redoTrigger.parentElement?.querySelector('.redo-options') || redoTrigger.nextElementSibling;
-    const isOpen = redoTrigger.classList.contains('is-open');
-    if (!isOpen) {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (!options || options.classList.contains('visual-collapsed') || options.classList.contains('hidden')) return;
-        animate(options,
-          [{ opacity: 0, transform: 'translateY(-7px)' }, { opacity: 1, transform: 'translateY(0)' }],
-          { duration: OPEN_MS, easing: 'cubic-bezier(.2,.8,.2,1)' }
-        );
-      }));
-      return;
-    }
+    const wasOpen = redoTrigger.classList.contains('is-open');
 
-    if (!options || options.classList.contains('hidden')) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    animate(options,
-      [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
-      { duration: CLOSE_MS, easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' }
-    );
-    setTimeout(() => replayClick(redoTrigger), CLOSE_MS + 8);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      animatePersistentLayout(before, elements);
+      if (!wasOpen && options && !options.classList.contains('hidden') && !options.classList.contains('visual-collapsed')) {
+        animate(
+          options,
+          [
+            { opacity: .45, transform: 'translate3d(0,-3px,0)' },
+            { opacity: 1, transform: 'translate3d(0,0,0)' }
+          ],
+          { duration: LAYOUT_MS, easing: EASE }
+        );
+      }
+    }));
   }
 
   const backwardSelectors = [
@@ -210,12 +200,14 @@
   function animateIncomingView(view, backward) {
     if (!view || view.dataset.ocMotionView === 'running') return;
     view.dataset.ocMotionView = 'running';
-    const animation = animate(view,
+    const x = backward ? -3 : 3;
+    const animation = animate(
+      view,
       [
-        { opacity: 0, transform: `translate3d(${backward ? '-7px' : '7px'}, ${backward ? '-2px' : '2px'}, 0)` },
+        { opacity: .55, transform: `translate3d(${x}px,1px,0)` },
         { opacity: 1, transform: 'translate3d(0,0,0)' }
       ],
-      { duration: VIEW_MS, easing: 'cubic-bezier(.2,.8,.2,1)' }
+      { duration: VIEW_MS, easing: EASE }
     );
     const done = () => delete view.dataset.ocMotionView;
     if (animation) animation.finished.then(done).catch(done);
@@ -229,7 +221,7 @@
       animateIncomingView(active, backward);
       return;
     }
-    if (performance.now() - startedAt < 220) setTimeout(() => watchViewChange(beforeId, backward, startedAt), 18);
+    if (performance.now() - startedAt < 260) setTimeout(() => watchViewChange(beforeId, backward, startedAt), 20);
   }
 
   function visibleModalIds() {
@@ -240,11 +232,15 @@
     if (!canAnimate()) return;
     $$('.modal-backdrop:not(.hidden)').forEach((backdrop) => {
       if (before.has(backdrop.id)) return;
-      animate(backdrop, [{ opacity: 0 }, { opacity: 1 }], { duration: 100, easing: 'ease-out' });
+      animate(backdrop, [{ opacity: .6 }, { opacity: 1 }], { duration: MODAL_MS, easing: 'ease-out' });
       const modal = $('.modal', backdrop);
-      animate(modal,
-        [{ opacity: .7, transform: 'translateY(6px) scale(.992)' }, { opacity: 1, transform: 'translateY(0) scale(1)' }],
-        { duration: 120, easing: 'cubic-bezier(.2,.8,.2,1)' }
+      animate(
+        modal,
+        [
+          { opacity: .72, transform: 'translate3d(0,3px,0) scale(.997)' },
+          { opacity: 1, transform: 'translate3d(0,0,0) scale(1)' }
+        ],
+        { duration: MODAL_MS, easing: EASE }
       );
     });
   }
@@ -263,13 +259,21 @@
     back.dataset.ocMotionReveal = 'true';
     if (ratings) ratings.dataset.ocMotionReveal = 'true';
 
-    animate(back,
-      [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'translateY(0)' }],
-      { duration: REVEAL_MS, easing: 'cubic-bezier(.2,.8,.2,1)' }
+    animate(
+      back,
+      [
+        { opacity: .45, transform: 'translate3d(0,-3px,0)' },
+        { opacity: 1, transform: 'translate3d(0,0,0)' }
+      ],
+      { duration: REVEAL_MS, easing: EASE }
     );
-    animate(ratings,
-      [{ opacity: 0, transform: 'translateY(7px)' }, { opacity: 1, transform: 'translateY(0)' }],
-      { duration: REVEAL_MS + 20, delay: 18, easing: 'cubic-bezier(.2,.8,.2,1)' }
+    animate(
+      ratings,
+      [
+        { opacity: .4, transform: 'translate3d(0,4px,0)' },
+        { opacity: 1, transform: 'translate3d(0,0,0)' }
+      ],
+      { duration: REVEAL_MS + 25, delay: 24, easing: EASE }
     );
   }
 
