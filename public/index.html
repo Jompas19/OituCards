@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#111827" />
   <title>OituCards</title>
-  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/style.css?v=20260823-1057" />
+  <link rel="stylesheet" href="css/study.css?v=20260823-1057" data-oitucards-study-css="true" />
+  <link rel="stylesheet" href="css/import.css?v=20260823-1057" data-oitucards-import-css="true" />
+  <link rel="stylesheet" href="css/library.css?v=20260823-1057" data-oitucards-library-css="true" />
 </head>
 <body>
   <div id="app">
@@ -131,11 +134,9 @@
               <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
               <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
 
-                                          <div class="color-control labeled-color-control" data-color-control="foreColor">
+              <div class="color-control labeled-color-control" data-color-control="foreColor">
                 <span class="color-control-label">Texto:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto">
-                  <span class="color-word">Cor</span>
-                </button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
                 <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -147,11 +148,9 @@
                 </div>
               </div>
 
-                                          <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
                 <span class="color-control-label">Fundo:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto">
-                  <span class="color-word">Cor</span>
-                </button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
                 <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -184,11 +183,9 @@
               <button class="tool-button" type="button" data-cmd="insertUnorderedList" title="Lista com tópicos">• Lista</button>
               <button class="tool-button" type="button" data-cmd="insertOrderedList" title="Lista numerada">1. Lista</button>
 
-                                          <div class="color-control labeled-color-control" data-color-control="foreColor">
+              <div class="color-control labeled-color-control" data-color-control="foreColor">
                 <span class="color-control-label">Texto:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto">
-                  <span class="color-word">Cor</span>
-                </button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor do texto" aria-label="Cor do texto"><span class="color-word">Cor</span></button>
                 <div class="color-palette hidden" data-color-type="foreColor" role="menu" aria-label="Cor do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -200,11 +197,9 @@
                 </div>
               </div>
 
-                                          <div class="color-control labeled-color-control" data-color-control="hiliteColor">
+              <div class="color-control labeled-color-control" data-color-control="hiliteColor">
                 <span class="color-control-label">Fundo:</span>
-                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto">
-                  <span class="color-word">Cor</span>
-                </button>
+                <button class="tool-button color-toggle text-color-toggle" type="button" title="Cor de fundo do texto" aria-label="Cor de fundo do texto"><span class="color-word">Cor</span></button>
                 <div class="color-palette hidden" data-color-type="hiliteColor" role="menu" aria-label="Cor de fundo do texto">
                   <button type="button" class="color-dot black" data-color="#000000" aria-label="Preto" title="Preto"></button>
                   <button type="button" class="color-dot white" data-color="#ffffff" aria-label="Branco" title="Branco"></button>
@@ -249,18 +244,8 @@
       </div>
 
       <div class="notice">
-        <strong>Estrutura preparada.</strong>
-        <p>O importador será adicionado em uma atualização futura. O objetivo é oferecer compatibilidade com <code>.apkg</code> e outros formatos sem alterar o restante do site.</p>
-      </div>
-
-      <label class="upload-placeholder">
-        <span class="upload-icon">⇧</span>
-        <strong>Importação ainda não habilitada na V1</strong>
-        <span>APKG • CSV • JSON</span>
-      </label>
-
-      <div class="modal-actions">
-        <button class="button primary" data-close-modal="importModal" type="button">Entendi</button>
+        <strong>Carregando importador...</strong>
+        <p>APKG • COLPKG • ANKI2 • ANKI21 • CSV • TSV/TXT • JSON</p>
       </div>
     </div>
   </div>
@@ -284,8 +269,14 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="js/db.js"></script>
-  <script src="js/editor.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/db.js?v=20260823-1057"></script>
+  <script src="js/editor.js?v=20260823-1057"></script>
+  <script src="js/app.js?v=20260823-1057"></script>
+  <script src="js/study-next.js?v=20260823-1057" data-oitucards-study="true" data-oitucards-study-next="true"></script>
+  <script src="js/multi-study.js?v=20260823-1057" data-oitucards-multi-study="true"></script>
+  <script src="js/multi-study-guard.js?v=20260823-1057" data-oitucards-multi-study-guard="true"></script>
+  <script src="js/import-anki-compat.js?v=20260823-1057" data-oitucards-import-anki-compat="true"></script>
+  <script src="js/import.js?v=20260823-1057" data-oitucards-import="true"></script>
+  <script src="js/library.js?v=20260823-1057" data-oitucards-library="true"></script>
 </body>
 </html>
