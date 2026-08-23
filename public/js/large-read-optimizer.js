@@ -242,15 +242,22 @@
     if (state.forceFullDepth > 0 || Date.now() < state.forceFullUntil) return baseGetCardsByDeck(deckId);
 
     if (state.lightConfigDepth > 0) {
-      const cards = await readLightCards(deckId);
-      state.summaryCache.set(deckId, cards);
-      state.countCache.set(deckId, cards.length);
-      return cards.slice();
+      const count = await countCards(deckId);
+      if (count > LARGE_THRESHOLD) {
+        const cards = await readLightCards(deckId);
+        state.summaryCache.set(deckId, cards);
+        state.countCache.set(deckId, cards.length);
+        return cards.slice();
+      }
+      return baseGetCardsByDeck(deckId);
     }
 
     if ($('#studyConfigView')?.classList.contains('active')) {
-      const selected = await selectStudyCards(deckId);
-      if (selected) return selected;
+      const count = await countCards(deckId);
+      if (count > LARGE_THRESHOLD) {
+        const selected = await selectStudyCards(deckId);
+        if (selected) return selected;
+      }
     }
 
     if ($('#homeView')?.classList.contains('active')) return homeSummary(deckId);
