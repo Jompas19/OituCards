@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   unpack:
-    if: ${{ hashFiles('OituCards-v1.2.zip') != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,6 +17,10 @@ jobs:
 
       - name: Extrair V1.2 para a raiz
         run: |
+          if [ ! -f OituCards-v1.2.zip ]; then
+            echo "ZIP já removido; nada a fazer."
+            exit 0
+          fi
           rm -rf .unpack
           mkdir .unpack
           unzip -q OituCards-v1.2.zip -d .unpack
