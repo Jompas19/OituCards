@@ -112,6 +112,13 @@
   overflow:visible!important;
 }
 
+/* O quadradinho visual usa a mesma área de clique do retângulo.
+   Isso evita conflito com o comportamento nativo do radio ao clicar diretamente nele. */
+.study-config-card .redo-option input[type="radio"]{
+  pointer-events:none!important;
+  cursor:pointer;
+}
+
 /* Quantidade: sem tooltip e sem frase fixa adicional. */
 .visual-quantity-fixed-hint{
   display:none!important;
