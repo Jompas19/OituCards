@@ -1,9 +1,31 @@
 (function () {
-  function loadLargeReadOptimizer(next = () => {}) {
-    const existing = document.querySelector('script[data-oitucards-large-read-optimizer]');
+  function loadLibraryStartupOptimizer(next = () => {}) {
+    const existing = document.querySelector('script[data-oitucards-library-startup-optimizer]');
     if (existing) {
       if (existing.dataset.loaded === "true") next();
       else existing.addEventListener("load", next, { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/library-startup-optimizer.js?v=20260823-1800";
+    script.dataset.oitucardsLibraryStartupOptimizer = "true";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      next();
+    }, { once: true });
+    script.onerror = () => {
+      console.error("Não foi possível carregar a otimização de inicialização da biblioteca.");
+      next();
+    };
+    document.body.appendChild(script);
+  }
+
+  function loadLargeReadOptimizer(next = () => {}) {
+    const existing = document.querySelector('script[data-oitucards-large-read-optimizer]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadLibraryStartupOptimizer(next);
+      else existing.addEventListener("load", () => loadLibraryStartupOptimizer(next), { once: true });
       return;
     }
     const script = document.createElement("script");
@@ -12,7 +34,7 @@
     script.dataset.oitucardsLargeReadOptimizer = "true";
     script.addEventListener("load", () => {
       script.dataset.loaded = "true";
-      next();
+      loadLibraryStartupOptimizer(next);
     }, { once: true });
     script.onerror = () => {
       console.error("Não foi possível carregar a leitura otimizada de baralhos grandes.");
