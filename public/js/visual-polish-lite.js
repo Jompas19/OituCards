@@ -14,7 +14,7 @@
     if (!document.querySelector('link[data-oitucards-study-tooltip-refinement-css]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = 'css/study-tooltip-refinement.css?v=20260823-1626';
+      link.href = 'css/study-tooltip-refinement.css?v=20260823-1636';
       link.dataset.oitucardsStudyTooltipRefinementCss = 'true';
       document.head.appendChild(link);
     }
