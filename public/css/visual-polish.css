@@ -1,0 +1,162 @@
+/* OituCards — pequenos ajustes de clareza e estabilidade visual. */
+
+/* Filtro de estudo: deixa explícito que as duas opções são opcionais. */
+.visual-filter-title{
+  font-size:0!important;
+}
+.visual-filter-title::before{
+  content:attr(data-visual-title);
+  font-size:.95rem;
+  font-weight:600;
+  color:var(--text);
+}
+.visual-filter-default-hint{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font-size:.76rem;
+  font-weight:450;
+  line-height:1.35;
+}
+
+/* Tooltips aparecem apenas durante hover. Clique/foco não mantém o balão aberto. */
+.visual-help-row:focus::after,
+.visual-help-row:focus-within::after,
+.visual-option-help:focus::after,
+.visual-option-help:focus-within::after{
+  opacity:0;
+  visibility:hidden;
+  transform:translateY(-2px);
+}
+.visual-help-row:hover::after,
+.visual-option-help:hover::after{
+  opacity:1;
+  visibility:visible;
+  transform:translateY(0);
+}
+
+/* Opções marcáveis ficam quadradas, com check explícito. */
+.visual-round-choice,
+.study-all-radio,
+.redo-option input[type="radio"]{
+  display:grid!important;
+  place-items:center;
+  width:18px!important;
+  height:18px!important;
+  min-width:18px!important;
+  margin:0!important;
+  border:1.5px solid #a8b0bd!important;
+  border-radius:5px!important;
+  background:#f8fafc!important;
+  box-shadow:none!important;
+}
+.visual-round-choice::after,
+.study-all-radio::after,
+.redo-option input[type="radio"]::after{
+  content:"✓";
+  color:#fff;
+  font-size:12px;
+  font-weight:900;
+  line-height:1;
+  transform:scale(0);
+  transition:transform .12s ease;
+}
+.visual-round-choice:checked,
+.study-all-radio:checked,
+.redo-option input[type="radio"]:checked{
+  background:var(--primary)!important;
+  border-color:var(--primary)!important;
+}
+.visual-round-choice:checked::after,
+.study-all-radio:checked::after,
+.redo-option input[type="radio"]:checked::after{
+  transform:scale(1);
+}
+.visual-round-choice:focus-visible,
+.study-all-radio:focus-visible,
+.redo-option input[type="radio"]:focus-visible{
+  outline:0;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 20%,transparent)!important;
+}
+html[data-theme="dark"] .visual-round-choice,
+html[data-theme="dark"] .study-all-radio,
+html[data-theme="dark"] .redo-option input[type="radio"]{
+  background:#515b6b!important;
+  border-color:#7a8597!important;
+}
+html[data-theme="dark"] .visual-round-choice:checked,
+html[data-theme="dark"] .study-all-radio:checked,
+html[data-theme="dark"] .redo-option input[type="radio"]:checked{
+  background:var(--primary)!important;
+  border-color:var(--primary)!important;
+}
+
+/* Toda a opção de refazer é clicável e a seleção fica evidente no retângulo. */
+.redo-option{
+  cursor:pointer;
+  transition:border-color .14s ease,background .14s ease,box-shadow .14s ease;
+}
+.redo-option:hover{
+  border-color:color-mix(in srgb,var(--primary) 34%,var(--line));
+}
+.redo-option:has(input[type="radio"]:checked){
+  border-color:color-mix(in srgb,var(--primary) 52%,var(--line));
+  background:color-mix(in srgb,var(--primary) 9%,var(--surface));
+}
+
+/* O botão de repetição nunca deixa o texto escapar do retângulo. */
+.rating-button{min-width:0}
+.rating-repeat .rating-title{
+  min-width:0;
+  white-space:normal!important;
+  flex-wrap:wrap;
+  line-height:1.12;
+}
+
+/* Sem "Embaralhe novamente", as quatro avaliações ficam centralizadas. */
+.study-rating-area.visual-no-repeat{
+  grid-template-columns:repeat(4,minmax(96px,150px));
+  justify-content:center;
+}
+
+/* Verso fica abaixo da divisória e alinhado horizontalmente com Frente. */
+.study-back-section{
+  padding-top:0!important;
+}
+.study-back-section > .study-face-label{
+  position:relative!important;
+  top:auto!important;
+  left:calc(22px - clamp(24px,5vw,46px))!important;
+  display:block;
+  width:max-content;
+  margin:0 0 12px!important;
+  text-align:left;
+}
+.study-back-section > .study-divider{
+  margin:18px 0 14px!important;
+}
+
+/* Evita mudança de altura quando o progresso agregado é recolocado após renderização. */
+.folder-main{
+  min-height:58px;
+}
+.visual-home-entering #deckList{
+  visibility:hidden;
+}
+
+@media(max-width:760px){
+  .study-rating-area.visual-no-repeat{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .study-back-section > .study-face-label{
+    left:-2px!important;
+  }
+  .folder-main{min-height:56px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .visual-round-choice::after,
+  .study-all-radio::after,
+  .redo-option input[type="radio"]::after,
+  .redo-option{transition:none}
+}

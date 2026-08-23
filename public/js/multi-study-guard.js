@@ -29,13 +29,36 @@
     document.body.appendChild(script);
   }
 
+  function loadVisualPolish() {
+    if (document.querySelector('script[data-oitucards-visual-polish]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/visual-polish.js?v=20260823-1435";
+    script.dataset.oitucardsVisualPolish = "true";
+    script.onerror = () => console.error("Não foi possível carregar os ajustes finos de interface.");
+    document.body.appendChild(script);
+  }
+
   function loadVisualRefinement() {
-    if (document.querySelector('script[data-oitucards-visual-refinement]')) return;
+    const existing = document.querySelector('script[data-oitucards-visual-refinement]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadVisualPolish();
+      else existing.addEventListener("load", loadVisualPolish, { once: true });
+      return;
+    }
+
     const script = document.createElement("script");
     script.async = false;
     script.src = "js/visual-refinement.js?v=20260823-1403";
     script.dataset.oitucardsVisualRefinement = "true";
-    script.onerror = () => console.error("Não foi possível carregar o refinamento visual.");
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      loadVisualPolish();
+    }, { once: true });
+    script.onerror = () => {
+      console.error("Não foi possível carregar o refinamento visual.");
+      loadVisualPolish();
+    };
     document.body.appendChild(script);
   }
 
