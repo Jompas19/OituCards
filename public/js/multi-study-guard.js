@@ -29,9 +29,20 @@
     document.body.appendChild(script);
   }
 
+  function loadVisualRefinement() {
+    if (document.querySelector('script[data-oitucards-visual-refinement]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/visual-refinement.js?v=20260823-1403";
+    script.dataset.oitucardsVisualRefinement = "true";
+    script.onerror = () => console.error("Não foi possível carregar o refinamento visual.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadStudyExitFlow();
   loadExport();
+  loadVisualRefinement();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
