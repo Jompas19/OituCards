@@ -25,7 +25,7 @@
   function animate(el, frames, options) {
     if (!canAnimate() || !el || el.classList.contains('hidden')) return null;
     try {
-      return el.animate(frames, { fill: 'both', ...options });
+      return el.animate(frames, { fill: 'none', ...options });
     } catch (_) {
       return null;
     }
@@ -85,7 +85,7 @@
     rows.forEach((row, index) => {
       animate(row,
         [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
-        { duration: CLOSE_MS, delay: Math.min(index, 18), easing: 'cubic-bezier(.4,0,.8,.2)' }
+        { duration: CLOSE_MS, delay: Math.min(index, 8), easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' }
       );
     });
     return true;
@@ -141,7 +141,7 @@
       if (!animateRowsUp(rows)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      setTimeout(() => replayClick(folderToggle), CLOSE_MS - 8);
+      setTimeout(() => replayClick(folderToggle), CLOSE_MS + 8);
       return;
     }
 
@@ -161,7 +161,7 @@
       if (!animateRowsUp(rows)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      setTimeout(() => replayClick(picker), CLOSE_MS - 8);
+      setTimeout(() => replayClick(picker), CLOSE_MS + 8);
       return;
     }
 
@@ -190,9 +190,9 @@
     event.stopImmediatePropagation();
     animate(options,
       [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-6px)' }],
-      { duration: CLOSE_MS, easing: 'cubic-bezier(.4,0,.8,.2)' }
+      { duration: CLOSE_MS, easing: 'cubic-bezier(.4,0,.8,.2)', fill: 'forwards' }
     );
-    setTimeout(() => replayClick(redoTrigger), CLOSE_MS - 8);
+    setTimeout(() => replayClick(redoTrigger), CLOSE_MS + 8);
   }
 
   const backwardSelectors = [
