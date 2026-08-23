@@ -9,6 +9,16 @@
     document.body.appendChild(script);
   }
 
+  function loadLibraryStability() {
+    if (document.querySelector('script[data-oitucards-library-stability]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/library-stability.js?v=20260823-1518";
+    script.dataset.oitucardsLibraryStability = "true";
+    script.onerror = () => console.error("Não foi possível carregar a estabilização visual da biblioteca.");
+    document.body.appendChild(script);
+  }
+
   function loadStudyExitFlow() {
     if (document.querySelector('script[data-oitucards-study-exit-flow]')) return;
     const script = document.createElement("script");
@@ -63,6 +73,7 @@
   }
 
   loadLibraryPerformance();
+  loadLibraryStability();
   loadStudyExitFlow();
   loadExport();
   loadVisualRefinement();
