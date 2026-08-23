@@ -5,7 +5,7 @@
     if (document.querySelector('link[data-oitucards-visual-polish-css]')) return;
     const link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = 'css/visual-polish.css?v=20260823-1507';
+    link.href = 'css/visual-polish.css?v=20260823-1600';
     link.dataset.oitucardsVisualPolishCss = 'true';
     document.head.appendChild(link);
   }

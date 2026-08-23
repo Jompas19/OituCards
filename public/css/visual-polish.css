@@ -177,3 +177,74 @@ html[data-theme="dark"] .redo-option input[type="radio"]:checked{
   .redo-option input[type="radio"]::after,
   .redo-option{transition:none}
 }
+
+/* Preparar estudo: o primeiro bloco já possui explicação fixa e não usa tooltip. */
+#studyNormalFilterSetting::after,
+#multiNormalFilters::after,
+#studyNormalFilterSetting .visual-option-help::after,
+#multiNormalFilters .visual-option-help::after{
+  content:none!important;
+  display:none!important;
+  opacity:0!important;
+  visibility:hidden!important;
+}
+
+/* Em desktop, os demais balões ficam dentro do próprio retângulo, à direita da escrita. */
+@media (hover:hover) and (pointer:fine){
+  .study-config-card .visual-help-row::after{
+    left:42%;
+    right:70px;
+    top:50%;
+    width:auto;
+    max-width:none;
+    max-height:36px;
+    box-sizing:border-box;
+    padding:5px 8px;
+    overflow:hidden;
+    line-height:1.18;
+    transform:translate(4px,-50%);
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+  }
+  .study-config-card .visual-help-row:hover::after{
+    transform:translate(0,-50%);
+  }
+
+  /* A quantidade tem controles mais largos à direita. */
+  .study-config-card .quantity-setting.visual-help-row::after{
+    left:40%;
+    right:205px;
+  }
+
+  /* Refazer baralho reserva o espaço do chevron. */
+  .study-config-card .redo-setting.visual-help-row::after{
+    left:40%;
+    right:50px;
+  }
+
+  /* Tooltips das opções internas nunca escapam do próprio quadrinho. */
+  .study-config-card .visual-option-help{
+    overflow:hidden;
+  }
+  .study-config-card .visual-option-help::after{
+    left:50%;
+    right:7px;
+    top:50%;
+    width:auto;
+    max-width:none;
+    max-height:32px;
+    box-sizing:border-box;
+    padding:4px 6px;
+    overflow:hidden;
+    font-size:.69rem;
+    line-height:1.12;
+    transform:translate(3px,-50%);
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+  }
+  .study-config-card .visual-option-help:hover::after{
+    transform:translate(0,-50%);
+  }
+}
