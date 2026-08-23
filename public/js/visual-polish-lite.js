@@ -1,13 +1,52 @@
 (function () {
   const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
   function ensureStyles() {
-    if (document.querySelector('link[data-oitucards-visual-polish-css]')) return;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'css/visual-polish.css?v=20260823-1600';
-    link.dataset.oitucardsVisualPolishCss = 'true';
-    document.head.appendChild(link);
+    if (!document.querySelector('link[data-oitucards-visual-polish-css]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'css/visual-polish.css?v=20260823-1600';
+      link.dataset.oitucardsVisualPolishCss = 'true';
+      document.head.appendChild(link);
+    }
+
+    if (!document.querySelector('link[data-oitucards-study-tooltip-refinement-css]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'css/study-tooltip-refinement.css?v=20260823-1607';
+      link.dataset.oitucardsStudyTooltipRefinementCss = 'true';
+      document.head.appendChild(link);
+    }
+  }
+
+  function removeTooltip(row, removeNested = false) {
+    if (!row) return;
+    row.classList.remove('visual-help-row');
+    delete row.dataset.visualHelp;
+    row.classList.add('visual-fixed-helper-row');
+
+    if (removeNested) {
+      $$('.visual-option-help', row).forEach((option) => {
+        option.classList.remove('visual-option-help');
+        delete option.dataset.visualHelp;
+      });
+    }
+  }
+
+  function ensureFixedHint(row, helperText, className) {
+    if (!row) return;
+    const title = $('.study-setting-title', row);
+    const copy = title?.parentElement || row.firstElementChild;
+    if (!copy) return;
+
+    let helper = $(`.${className}`, copy);
+    if (!helper) {
+      helper = document.createElement('span');
+      helper.className = `visual-filter-default-hint ${className}`;
+      copy.appendChild(helper);
+    }
+    helper.textContent = helperText;
   }
 
   function decorateFilter(filterSelector, helperText) {
@@ -20,20 +59,33 @@
       title.dataset.visualTitle = 'Quer estudar só um tipo?';
     }
 
-    const copy = title?.parentElement || row.firstElementChild;
-    if (copy) {
-      let helper = $('.visual-filter-default-hint', copy);
-      if (!helper) {
-        helper = document.createElement('span');
-        helper.className = 'visual-filter-default-hint';
-        copy.appendChild(helper);
-      }
-      helper.textContent = helperText;
-    }
+    ensureFixedHint(row, helperText, 'visual-filter-fixed-hint');
+    removeTooltip(row, true);
+  }
 
-    // A explicação principal já está fixa abaixo do título; não exibir tooltip neste bloco.
-    row.classList.remove('visual-help-row');
-    delete row.dataset.visualHelp;
+  function decorateQuantity(inputSelector, helperText) {
+    const input = $(inputSelector);
+    const row = input?.closest('.study-setting');
+    if (!row) return;
+
+    ensureFixedHint(row, helperText, 'visual-quantity-fixed-hint');
+    removeTooltip(row, false);
+  }
+
+  function decorateRedoHelp(optionsSelector) {
+    const options = $(optionsSelector);
+    if (!options) return;
+
+    $$('.redo-option', options).forEach((tile) => {
+      const label = $('strong', tile)?.textContent?.trim().toLowerCase() || '';
+      if (label.includes('reiniciar')) {
+        tile.dataset.visualHelp = 'Zera o progresso e reinicia a agenda dos cards.';
+        tile.classList.add('visual-option-help');
+      } else if (label.includes('manter')) {
+        tile.dataset.visualHelp = 'Refaz agora sem alterar o progresso nem a agenda.';
+        tile.classList.add('visual-option-help');
+      }
+    });
   }
 
   function redoConfigForTile(tile) {
@@ -92,6 +144,13 @@
   function sync() {
     decorateFilter('#studyNormalFilterSetting', 'Sem marcar nada: cards novos + revisões de hoje.');
     decorateFilter('#multiNormalFilters', 'Sem marcar nada: cards novos + revisões de hoje.');
+
+    decorateQuantity('#studyCountInput', 'Digite uma quantidade ou marque Fazer todos.');
+    decorateQuantity('#multiCount', 'Digite uma quantidade ou marque Fazer todos.');
+
+    decorateRedoHelp('#studyRedoOptions');
+    decorateRedoHelp('#multiRedoOptions');
+
     syncRatingLayout('#studyRatingArea', '#ratingRepeat', '#ratingHard');
     syncRatingLayout('#multiRatings', '#multiRateRepeat', '#multiRateHard');
   }
