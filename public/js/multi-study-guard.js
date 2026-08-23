@@ -19,8 +19,19 @@
     document.body.appendChild(script);
   }
 
+  function loadExport() {
+    if (document.querySelector('script[data-oitucards-export]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/export.js?v=20260823-1202";
+    script.dataset.oitucardsExport = "true";
+    script.onerror = () => console.error("Não foi possível carregar o exportador APKG.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadStudyExitFlow();
+  loadExport();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
