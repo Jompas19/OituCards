@@ -1,14 +1,15 @@
 (function () {
   const MAX_LAYOUT_ITEMS = 32;
   const LAYOUT_MS = 210;
-  const VIEW_MS = 190;
-  const REVEAL_MS = 200;
+  const VIEW_MS = 235;
+  const REVEAL_MS = 245;
   const MODAL_MS = 175;
   const EASE = 'cubic-bezier(.22,.61,.36,1)';
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  let pendingViewBackward = false;
 
   function ensureStyles() {
     if (document.querySelector('link[data-oitucards-animations-css]')) return;
@@ -170,19 +171,19 @@
     const options = redoTrigger.parentElement?.querySelector('.redo-options') || redoTrigger.nextElementSibling;
     const wasOpen = redoTrigger.classList.contains('is-open');
 
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    queueMicrotask(() => {
       animatePersistentLayout(before, elements);
       if (!wasOpen && options && !options.classList.contains('hidden') && !options.classList.contains('visual-collapsed')) {
         animate(
           options,
           [
-            { opacity: .45, transform: 'translate3d(0,-3px,0)' },
-            { opacity: 1, transform: 'translate3d(0,0,0)' }
+            { opacity: .72 },
+            { opacity: 1 }
           ],
-          { duration: LAYOUT_MS, easing: EASE }
+          { duration: 190, easing: EASE }
         );
       }
-    }));
+    });
   }
 
   const backwardSelectors = [
@@ -200,11 +201,11 @@
   function animateIncomingView(view, backward) {
     if (!view || view.dataset.ocMotionView === 'running') return;
     view.dataset.ocMotionView = 'running';
-    const x = backward ? -3 : 3;
+    const x = backward ? -2 : 2;
     const animation = animate(
       view,
       [
-        { opacity: .55, transform: `translate3d(${x}px,1px,0)` },
+        { opacity: .82, transform: `translate3d(${x}px,1px,0)` },
         { opacity: 1, transform: 'translate3d(0,0,0)' }
       ],
       { duration: VIEW_MS, easing: EASE }
@@ -214,14 +215,17 @@
     else done();
   }
 
-  function watchViewChange(beforeId, backward, startedAt = performance.now()) {
-    if (!canAnimate()) return;
-    const active = $('.view.active');
-    if (active && active.id !== beforeId) {
-      animateIncomingView(active, backward);
-      return;
-    }
-    if (performance.now() - startedAt < 260) setTimeout(() => watchViewChange(beforeId, backward, startedAt), 20);
+  function installViewObservers() {
+    $$('.view').forEach((view) => {
+      if (view.dataset.ocMotionViewObserved === 'true') return;
+      view.dataset.ocMotionViewObserved = 'true';
+      const observer = new MutationObserver(() => {
+        if (!view.classList.contains('active')) return;
+        animateIncomingView(view, pendingViewBackward);
+        pendingViewBackward = false;
+      });
+      observer.observe(view, { attributes: true, attributeFilter: ['class'] });
+    });
   }
 
   function visibleModalIds() {
@@ -245,83 +249,84 @@
     });
   }
 
-  function resetRevealMarkers() {
-    ['studyBackSection', 'studyRatingArea', 'multiBackSection', 'multiRatings'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) delete el.dataset.ocMotionReveal;
-    });
-  }
-
-  function animateReveal(backId, ratingsId) {
-    const back = document.getElementById(backId);
-    const ratings = document.getElementById(ratingsId);
-    if (!back || back.classList.contains('hidden') || back.dataset.ocMotionReveal === 'true') return;
-    back.dataset.ocMotionReveal = 'true';
-    if (ratings) ratings.dataset.ocMotionReveal = 'true';
-
+  function animateBackSection(back) {
     animate(
       back,
       [
-        { opacity: .45, transform: 'translate3d(0,-3px,0)' },
+        { opacity: .76, transform: 'translate3d(0,-2px,0)' },
         { opacity: 1, transform: 'translate3d(0,0,0)' }
       ],
       { duration: REVEAL_MS, easing: EASE }
     );
-    animate(
-      ratings,
-      [
-        { opacity: .4, transform: 'translate3d(0,4px,0)' },
-        { opacity: 1, transform: 'translate3d(0,0,0)' }
-      ],
-      { duration: REVEAL_MS + 25, delay: 24, easing: EASE }
-    );
   }
 
-  function scheduleRevealAnimation(kind) {
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (kind === 'multi') animateReveal('multiBackSection', 'multiRatings');
-      else animateReveal('studyBackSection', 'studyRatingArea');
-    }));
+  function animateRatingsArea(area) {
+    animate(
+      area,
+      [
+        { opacity: .78, transform: 'translate3d(0,2px,0)' },
+        { opacity: 1, transform: 'translate3d(0,0,0)' }
+      ],
+      { duration: REVEAL_MS + 15, easing: EASE }
+    );
+
+    $$('.rating-button:not(.hidden)', area).forEach((button, index) => {
+      animate(
+        button,
+        [
+          { opacity: .72, transform: 'translate3d(0,2px,0)' },
+          { opacity: 1, transform: 'translate3d(0,0,0)' }
+        ],
+        { duration: REVEAL_MS + 20, delay: Math.min(index * 12, 48), easing: EASE }
+      );
+    });
+  }
+
+  function installRevealObserver(id, onReveal) {
+    const el = document.getElementById(id);
+    if (!el || el.dataset.ocMotionRevealObserved === 'true') return;
+    el.dataset.ocMotionRevealObserved = 'true';
+    let wasHidden = el.classList.contains('hidden');
+    const observer = new MutationObserver(() => {
+      const hidden = el.classList.contains('hidden');
+      if (wasHidden && !hidden) onReveal(el);
+      wasHidden = hidden;
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  function installRevealObservers() {
+    installRevealObserver('studyBackSection', animateBackSection);
+    installRevealObserver('studyRatingArea', animateRatingsArea);
+    installRevealObserver('multiBackSection', animateBackSection);
+    installRevealObserver('multiRatings', animateRatingsArea);
   }
 
   function handleGeneralClick(event) {
     const target = event.target;
     if (!(target instanceof Element)) return;
 
-    const beforeView = $('.view.active')?.id || '';
+    installViewObservers();
+    installRevealObservers();
+
     const beforeModals = visibleModalIds();
     const viewTrigger = target.closest(viewTriggerSelectors);
     if (viewTrigger) {
-      const backward = Boolean(viewTrigger.matches(backwardSelectors) || viewTrigger.closest(backwardSelectors));
-      setTimeout(() => watchViewChange(beforeView, backward), 0);
+      pendingViewBackward = Boolean(viewTrigger.matches(backwardSelectors) || viewTrigger.closest(backwardSelectors));
     }
 
     if (target.closest('button,.button,.action-button,.icon-button,.link-button,.deck-name-button')) {
       requestAnimationFrame(() => animateNewModals(beforeModals));
     }
-
-    if (target.closest('#studyCard')) scheduleRevealAnimation('single');
-    if (target.closest('#multiCard')) scheduleRevealAnimation('multi');
-
-    if (target.closest('[data-rating],#studyPrevButton,#studyNextButton,#startStudyButton,#studyAgainButton,[data-multi-rating],#multiPrev,#multiNextArrow,#multiStart,#multiAgain')) {
-      resetRevealMarkers();
-    }
-  }
-
-  function handleKeydown(event) {
-    if (event.code === 'Space') {
-      if ($('#studyView.active')) scheduleRevealAnimation('single');
-      if ($('#multiStudyView.active')) scheduleRevealAnimation('multi');
-    }
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || /^[0-4]$/.test(event.key)) resetRevealMarkers();
   }
 
   function init() {
     ensureStyles();
     document.documentElement.classList.add('oc-motion-enabled');
+    installViewObservers();
+    installRevealObservers();
     document.addEventListener('click', handleCollapsibleClick, true);
     document.addEventListener('click', handleGeneralClick, true);
-    document.addEventListener('keydown', handleKeydown, true);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
