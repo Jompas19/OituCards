@@ -1,10 +1,17 @@
-.study-config-wrap{width:min(760px,100%);margin:0 auto}
+.study-config-wrap{width:min(780px,100%);margin:0 auto}
 .study-config-heading{margin-bottom:22px}
-.study-config-heading h1{margin:4px 0 7px;font-size:clamp(2rem,5vw,3rem);letter-spacing:-.045em}
+.study-config-heading h1,.review-settings-heading h1{margin:4px 0 7px;font-size:clamp(2rem,5vw,3rem);letter-spacing:-.045em}
 .study-config-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden}
 .study-setting{display:flex;align-items:center;justify-content:space-between;gap:22px;padding:21px 22px;border-bottom:1px solid var(--line)}
 .study-setting-title{display:block;font-weight:800;color:var(--text)}
 .study-setting-help{display:block;margin:5px 0 0;color:var(--muted);font-size:.88rem;line-height:1.45}
+.study-filter-setting{align-items:flex-start}
+.study-filter-options{display:grid;grid-template-columns:1fr;gap:9px;min-width:245px}
+.study-filter-option{display:flex;align-items:flex-start;gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2);cursor:pointer}
+.study-filter-option input{margin-top:3px}
+.study-filter-option span{display:grid;gap:2px}
+.study-filter-option strong{font-size:.88rem;color:var(--text)}
+.study-filter-option small{color:var(--muted);font-size:.75rem}
 .study-quantity-controls{display:flex;align-items:center;gap:12px;flex-shrink:0}
 .study-count-input{width:104px}
 .check-option{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;color:var(--text);font-weight:700}
@@ -13,7 +20,7 @@
 .switch-input:checked{background:var(--primary);border-color:var(--primary)}
 .switch-input:checked::after{transform:translateX(20px)}
 .study-config-card .notice{margin:18px 22px 0}
-.study-config-actions{display:flex;gap:9px;padding:22px}
+.study-config-actions{display:flex;gap:9px;padding:22px;flex-wrap:wrap}
 .study-session-top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
 .study-session-status{display:flex;align-items:center;gap:10px;font-variant-numeric:tabular-nums}
 .study-timer,.study-progress{display:inline-flex;min-height:34px;align-items:center;justify-content:center;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--text);font-size:.84rem;font-weight:800}
@@ -33,18 +40,37 @@
 .study-edit-button{border:0;background:transparent;color:var(--muted);font-size:.78rem;font-weight:700;cursor:pointer;padding:6px 4px}
 .study-edit-button:hover{color:var(--text)}
 .study-rating-area{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:15px}
-.rating-button{min-height:52px;border:0;border-radius:12px;padding:8px 9px;color:#fff;font-weight:800;cursor:pointer}
+.rating-button{min-height:62px;border:0;border-radius:12px;padding:8px 9px;color:#fff;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center}
 .rating-repeat{background:#374151}
 .rating-hard{background:#b91c1c}
 .rating-medium{background:#d6a91b;color:#171717}
 .rating-good{background:#39a76b}
 .rating-easy{background:#75a9ed}
-.rating-key{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-right:6px;border-radius:7px;background:rgba(255,255,255,.18);font-size:.72rem}
+.rating-title{display:flex;align-items:center;justify-content:center;gap:2px}
+.rating-key{display:inline-grid;place-items:center;min-width:22px;height:22px;margin-right:5px;border-radius:7px;background:rgba(255,255,255,.18);font-size:.72rem}
+.rating-interval{font-size:.68rem;font-weight:650;opacity:.86;line-height:1.15}
+.rating-medium .rating-key{background:rgba(0,0,0,.1)}
 .study-complete{width:min(620px,100%);margin:70px auto 0;padding:52px 28px;text-align:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm)}
 .study-complete-actions{display:flex;justify-content:center;gap:9px;margin-top:22px;flex-wrap:wrap}
+.review-due-badge{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--surface-2);color:var(--muted);font-size:.72rem;font-weight:800;white-space:nowrap}
+.review-due-badge.has-due{border-color:color-mix(in srgb,var(--primary) 40%,var(--line));background:color-mix(in srgb,var(--primary) 12%,var(--surface));color:var(--primary)}
+.review-settings-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:22px}
+.review-settings-intro{padding:22px;border-bottom:1px solid var(--line)}
+.review-settings-intro strong,.review-rule-summary strong{color:var(--text)}
+.review-settings-intro p,.review-rule-summary p{margin:6px 0 0;color:var(--muted);font-size:.88rem;line-height:1.5}
+.review-interval-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;border-bottom:1px solid var(--line)}
+.review-interval-field{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);font-weight:800;color:var(--text)}
+.review-interval-field:nth-child(even){border-right:0}
+.review-interval-field:nth-last-child(-n+2){border-bottom:0}
+.review-interval-field div{display:flex;align-items:center;gap:7px}
+.review-interval-field .text-input{width:88px}
+.review-interval-field small{color:var(--muted);font-size:.76rem;font-weight:700}
+.review-rule-summary{padding:20px 22px;background:var(--surface-2);border-bottom:1px solid var(--line)}
+.review-settings-status{min-height:20px;margin:12px 22px 0;color:var(--primary);font-size:.82rem;font-weight:700}
 @media(max-width:760px){
   .study-setting{align-items:flex-start;flex-direction:column}
   .check-setting{flex-direction:row;align-items:center}
+  .study-filter-options{width:100%;min-width:0}
   .study-quantity-controls{width:100%;justify-content:space-between}
   .study-workspace{grid-template-columns:1fr}
   .study-nav-button{position:fixed;bottom:18px;z-index:25;width:44px;height:44px}
@@ -53,4 +79,8 @@
   .study-card{min-height:360px;padding:25px 20px}
   .study-rating-area{grid-template-columns:repeat(2,minmax(0,1fr));padding-bottom:58px}
   .rating-repeat{grid-column:1/-1}
+  .review-settings-heading{align-items:flex-start;flex-direction:column}
+  .review-interval-grid{grid-template-columns:1fr}
+  .review-interval-field{border-right:0!important;border-bottom:1px solid var(--line)!important}
+  .review-interval-field:last-child{border-bottom:0!important}
 }
