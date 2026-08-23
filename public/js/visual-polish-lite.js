@@ -14,7 +14,7 @@
     if (!document.querySelector('link[data-oitucards-study-tooltip-refinement-css]')) {
       const link = document.createElement('link');
       link.rel = 'stylesheet';
-      link.href = 'css/study-tooltip-refinement.css?v=20260823-1607';
+      link.href = 'css/study-tooltip-refinement.css?v=20260823-1617';
       link.dataset.oitucardsStudyTooltipRefinementCss = 'true';
       document.head.appendChild(link);
     }
@@ -22,9 +22,11 @@
 
   function removeTooltip(row, removeNested = false) {
     if (!row) return;
-    row.classList.remove('visual-help-row');
+    row.classList.remove('visual-help-row', 'visual-inline-help-row');
     delete row.dataset.visualHelp;
     row.classList.add('visual-fixed-helper-row');
+
+    $$('.visual-inline-help-anchor', row).forEach((anchor) => anchor.remove());
 
     if (removeNested) {
       $$('.visual-option-help', row).forEach((option) => {
@@ -49,6 +51,11 @@
     helper.textContent = helperText;
   }
 
+  function removeFixedHint(row, className) {
+    if (!row) return;
+    $(`.${className}`, row)?.remove();
+  }
+
   function decorateFilter(filterSelector, helperText) {
     const row = $(filterSelector);
     if (!row) return;
@@ -63,13 +70,33 @@
     removeTooltip(row, true);
   }
 
-  function decorateQuantity(inputSelector, helperText) {
+  function decorateQuantity(inputSelector) {
     const input = $(inputSelector);
     const row = input?.closest('.study-setting');
     if (!row) return;
 
-    ensureFixedHint(row, helperText, 'visual-quantity-fixed-hint');
+    removeFixedHint(row, 'visual-quantity-fixed-hint');
     removeTooltip(row, false);
+  }
+
+  function decorateInlineTooltips(root = document) {
+    $$('.study-config-card .visual-help-row', root).forEach((row) => {
+      if (row.classList.contains('visual-fixed-helper-row')) return;
+
+      const text = row.dataset.visualHelp?.trim();
+      const title = $('.study-setting-title', row);
+      if (!text || !title) return;
+
+      row.classList.add('visual-inline-help-row');
+      let anchor = $('.visual-inline-help-anchor', title);
+      if (!anchor) {
+        anchor = document.createElement('span');
+        anchor.className = 'visual-inline-help-anchor';
+        anchor.setAttribute('aria-hidden', 'true');
+        title.appendChild(anchor);
+      }
+      anchor.dataset.visualHelp = text;
+    });
   }
 
   function decorateRedoHelp(optionsSelector) {
@@ -77,13 +104,31 @@
     if (!options) return;
 
     $$('.redo-option', options).forEach((tile) => {
-      const label = $('strong', tile)?.textContent?.trim().toLowerCase() || '';
+      tile.classList.remove('visual-option-help');
+      delete tile.dataset.visualHelp;
+
+      const strong = $('strong', tile);
+      const label = strong?.textContent?.trim().toLowerCase() || '';
+      if (!strong) return;
+
+      let help = $('.redo-help-icon', tile);
+      if (!help) {
+        help = document.createElement('span');
+        help.className = 'redo-help-icon';
+        help.textContent = '?';
+        help.tabIndex = 0;
+        help.setAttribute('role', 'img');
+        strong.insertAdjacentElement('afterend', help);
+      }
+
       if (label.includes('reiniciar')) {
-        tile.dataset.visualHelp = 'Zera o progresso e reinicia a agenda dos cards.';
-        tile.classList.add('visual-option-help');
+        help.dataset.visualHelp = 'Zera o progresso e reinicia a agenda dos cards.';
+        help.setAttribute('aria-label', 'Ajuda sobre Reiniciar progresso');
       } else if (label.includes('manter')) {
-        tile.dataset.visualHelp = 'Refaz agora sem alterar o progresso nem a agenda.';
-        tile.classList.add('visual-option-help');
+        help.dataset.visualHelp = 'Refaz agora sem alterar o progresso nem a agenda.';
+        help.setAttribute('aria-label', 'Ajuda sobre Manter progresso');
+      } else {
+        help.remove();
       }
     });
   }
@@ -107,6 +152,14 @@
   }
 
   function handleRedoTileClick(event) {
+    const helpIcon = event.target.closest('.redo-help-icon');
+    if (helpIcon) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      helpIcon.focus({ preventScroll: true });
+      return;
+    }
+
     const tile = event.target.closest('.redo-option');
     if (!tile) return;
 
@@ -116,7 +169,6 @@
     const radio = $('input[type="radio"]', tile);
     if (!radio) return;
 
-    // Assume totalmente o clique para evitar o comportamento nativo irreversível de radio.
     event.preventDefault();
     event.stopImmediatePropagation();
 
@@ -128,7 +180,6 @@
     if (!wasSelected) radio.checked = true;
     config.checkbox.checked = !wasSelected;
 
-    // O listener original do checkbox atualiza filtros, quantidade e modo de revisão.
     config.checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     radio.focus({ preventScroll: true });
   }
@@ -145,11 +196,12 @@
     decorateFilter('#studyNormalFilterSetting', 'Sem marcar nada: cards novos + revisões de hoje.');
     decorateFilter('#multiNormalFilters', 'Sem marcar nada: cards novos + revisões de hoje.');
 
-    decorateQuantity('#studyCountInput', 'Digite uma quantidade ou marque Fazer todos.');
-    decorateQuantity('#multiCount', 'Digite uma quantidade ou marque Fazer todos.');
+    decorateQuantity('#studyCountInput');
+    decorateQuantity('#multiCount');
 
     decorateRedoHelp('#studyRedoOptions');
     decorateRedoHelp('#multiRedoOptions');
+    decorateInlineTooltips();
 
     syncRatingLayout('#studyRatingArea', '#ratingRepeat', '#ratingHard');
     syncRatingLayout('#multiRatings', '#multiRateRepeat', '#multiRateHard');
@@ -160,7 +212,6 @@
   }
 
   function bindEvents() {
-    // Captura o clique antes dos listeners antigos dos radios/labels.
     document.addEventListener('click', handleRedoTileClick, true);
 
     document.addEventListener('change', (event) => {
