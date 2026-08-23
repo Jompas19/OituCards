@@ -5,15 +5,21 @@
   align-items:center;
   justify-content:space-between;
   gap:12px;
-  min-height:34px;
-  margin:0 4px 8px;
+  min-height:0;
+  max-height:0;
+  margin:0 4px;
+  overflow:hidden;
   opacity:0;
   visibility:hidden;
   transform:translateY(-3px);
   pointer-events:none;
-  transition:opacity .16s ease,transform .18s cubic-bezier(.2,.8,.2,1),visibility .16s ease;
+  transition:opacity .16s ease,transform .18s cubic-bezier(.2,.8,.2,1),visibility .16s ease,max-height .18s cubic-bezier(.2,.8,.2,1),margin .18s cubic-bezier(.2,.8,.2,1);
 }
 .study-annotation-actions.is-visible{
+  min-height:34px;
+  max-height:42px;
+  margin:0 4px 8px;
+  overflow:visible;
   opacity:1;
   visibility:visible;
   transform:translateY(0);
@@ -286,6 +292,7 @@
 
 @media(max-width:560px){
   .study-annotation-actions{margin-left:0;margin-right:0}
+  .study-annotation-actions.is-visible{margin-left:0;margin-right:0}
   .study-annotation-button{font-size:.75rem;padding:5px 4px}
   .annotation-backdrop{padding:8px}
   .annotation-editor-panel{width:calc(100vw - 16px);max-height:calc(100vh - 16px)}
