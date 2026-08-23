@@ -7,10 +7,13 @@
     countPromise: null,
     summaryCache: new Map(),
     placeholderCache: new Map(),
-    detailPromise: null,
-    detailScheduled: false,
+    detailQueue: [],
+    detailQueued: new Set(),
+    detailRunning: false,
+    backgroundPaused: false,
     fullReadDepth: 0,
     forceFullUntil: 0,
+    pendingDeckId: null,
     refreshTimer: null
   };
 
@@ -22,12 +25,27 @@
   const previousDeleteDeck = OituDB.deleteDeck.bind(OituDB);
   const previousGetCard = OituDB.getCard.bind(OituDB);
 
+  function homeActive() {
+    return Boolean($('#homeView')?.classList.contains('active'));
+  }
+
   async function db() {
     return OituDB.openDB();
   }
 
-  function homeActive() {
-    return Boolean($('#homeView')?.classList.contains('active'));
+  async function fullRead(deckId) {
+    const database = await db();
+    return new Promise((resolve, reject) => {
+      const tx = database.transaction('cards', 'readonly');
+      const req = tx.objectStore('cards').index('deckId').getAll(IDBKeyRange.only(deckId));
+      req.onsuccess = () => {
+        const cards = req.result || [];
+        cards.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+        resolve(cards);
+      };
+      req.onerror = () => reject(req.error);
+      tx.onerror = () => reject(tx.error);
+    });
   }
 
   function summaryCard(card) {
@@ -40,42 +58,11 @@
     };
   }
 
-  async function ensureCounts() {
-    if (state.countMap) return state.countMap;
-    if (state.countPromise) return state.countPromise;
-
-    state.countPromise = (async () => {
-      const database = await db();
-      return new Promise((resolve, reject) => {
-        const counts = new Map();
-        const tx = database.transaction('cards', 'readonly');
-        const req = tx.objectStore('cards').index('deckId').openKeyCursor();
-
-        req.onsuccess = (event) => {
-          const cursor = event.target.result;
-          if (!cursor) {
-            state.countMap = counts;
-            resolve(counts);
-            return;
-          }
-          const deckId = cursor.key;
-          counts.set(deckId, (counts.get(deckId) || 0) + 1);
-          cursor.continue();
-        };
-        req.onerror = () => reject(req.error);
-        tx.onerror = () => reject(tx.error);
-      });
-    })().finally(() => {
-      state.countPromise = null;
-    });
-
-    return state.countPromise;
-  }
-
   function placeholders(deckId, count) {
     const cached = state.placeholderCache.get(deckId);
     if (cached?.length === count) return cached.slice();
     const sample = Object.freeze({
+      deckId,
       reviewStatus: null,
       reviewCount: 0,
       lastReviewedAt: null,
@@ -88,101 +75,171 @@
     return cards.slice();
   }
 
-  function refreshLibraryOnce() {
+  function refreshLibrarySoon(delay = 120) {
     clearTimeout(state.refreshTimer);
     state.refreshTimer = setTimeout(() => {
-      if (!homeActive()) return;
+      if (!homeActive() || state.backgroundPaused) return;
       Promise.resolve(window.OituLibrary?.render?.()).catch((error) => console.error(error));
-    }, 80);
+    }, delay);
   }
 
-  async function scanAllSummaries() {
-    if (state.detailPromise) return state.detailPromise;
+  function ensureCounts() {
+    if (state.countMap) return Promise.resolve(state.countMap);
+    if (state.countPromise) return state.countPromise;
 
-    state.detailPromise = (async () => {
-      const database = await db();
-      return new Promise((resolve, reject) => {
-        const grouped = new Map();
-        let cancelledForNavigation = false;
+    state.countPromise = Promise.all([OituDB.getDecks(), db()])
+      .then(([decks, database]) => new Promise((resolve, reject) => {
+        const counts = new Map();
+        if (!decks.length) {
+          state.countMap = counts;
+          resolve(counts);
+          return;
+        }
+
         const tx = database.transaction('cards', 'readonly');
-        const req = tx.objectStore('cards').openCursor();
+        const index = tx.objectStore('cards').index('deckId');
+        let pending = decks.length;
+        let failed = false;
 
-        req.onsuccess = (event) => {
-          if (!homeActive()) {
-            cancelledForNavigation = true;
-            try { tx.abort(); } catch (_) {}
-            return;
-          }
-
-          const cursor = event.target.result;
-          if (!cursor) {
-            state.summaryCache = grouped;
-            state.placeholderCache.clear();
-            const counts = new Map();
-            grouped.forEach((cards, deckId) => counts.set(deckId, cards.length));
-            state.countMap = counts;
-            resolve(grouped);
-            return;
-          }
-
-          const card = cursor.value;
-          const deckId = card?.deckId;
-          if (deckId) {
-            if (!grouped.has(deckId)) grouped.set(deckId, []);
-            grouped.get(deckId).push(summaryCard(card));
-          }
-          cursor.continue();
-        };
-
-        req.onerror = () => reject(req.error);
+        decks.forEach((deck) => {
+          const req = index.count(IDBKeyRange.only(deck.id));
+          req.onsuccess = () => {
+            counts.set(deck.id, Number(req.result || 0));
+            pending -= 1;
+            if (!pending && !failed) {
+              state.countMap = counts;
+              resolve(counts);
+            }
+          };
+          req.onerror = () => {
+            if (failed) return;
+            failed = true;
+            reject(req.error);
+          };
+        });
         tx.onerror = () => {
-          if (cancelledForNavigation) resolve(null);
-          else reject(tx.error);
+          if (!failed) reject(tx.error);
         };
-        tx.onabort = () => {
-          if (cancelledForNavigation) resolve(null);
-          else reject(tx.error || new Error('Leitura de resumo cancelada.'));
-        };
-      });
-    })()
-      .then((result) => {
-        if (result) refreshLibraryOnce();
-        return result;
+      }))
+      .then((counts) => {
+        refreshLibrarySoon(0);
+        if (homeActive() && !state.backgroundPaused) {
+          for (const deckId of counts.keys()) queueDetail(deckId);
+        }
+        return counts;
       })
       .catch((error) => {
-        console.warn('OituCards: resumo global da biblioteca indisponível.', error);
+        console.warn('OituCards: contagem rápida da biblioteca indisponível.', error);
         return null;
       })
       .finally(() => {
-        state.detailPromise = null;
-        state.detailScheduled = false;
+        state.countPromise = null;
       });
 
-    return state.detailPromise;
+    return state.countPromise;
   }
 
-  function scheduleDetailScan() {
-    if (state.summaryCache.size || state.detailPromise || state.detailScheduled) return;
-    state.detailScheduled = true;
-    const run = () => {
-      if (!homeActive()) {
-        state.detailScheduled = false;
+  function queueDetail(deckId) {
+    if (!deckId || state.summaryCache.has(deckId) || state.detailQueued.has(deckId)) return;
+    state.detailQueued.add(deckId);
+    state.detailQueue.push(deckId);
+    scheduleDetailWork();
+  }
+
+  function scheduleDetailWork() {
+    if (state.detailRunning || state.backgroundPaused || !state.detailQueue.length || !homeActive()) return;
+    state.detailRunning = true;
+
+    const run = (deadline) => {
+      state.detailRunning = false;
+      if (state.backgroundPaused || !homeActive() || !state.detailQueue.length) return;
+      if (deadline && !deadline.didTimeout && deadline.timeRemaining() < 6) {
+        scheduleDetailWork();
         return;
       }
-      scanAllSummaries();
+
+      const deckId = state.detailQueue.shift();
+      state.detailQueued.delete(deckId);
+      readDeckSummary(deckId)
+        .then((cards) => {
+          if (!cards) return;
+          state.summaryCache.set(deckId, cards);
+          state.placeholderCache.delete(deckId);
+          if (state.countMap) state.countMap.set(deckId, cards.length);
+          if (state.detailQueue.length % 8 === 0 || !state.detailQueue.length) refreshLibrarySoon(240);
+        })
+        .catch((error) => console.warn('OituCards: resumo ocioso de um baralho falhou.', error))
+        .finally(() => scheduleDetailWork());
     };
-    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 1500 });
-    else setTimeout(run, 300);
+
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run);
+    else setTimeout(() => run(null), 220);
+  }
+
+  async function readDeckSummary(deckId) {
+    if (!homeActive() || state.backgroundPaused) return null;
+    const database = await db();
+    return new Promise((resolve, reject) => {
+      const cards = [];
+      let cancelled = false;
+      const tx = database.transaction('cards', 'readonly');
+      const req = tx.objectStore('cards').index('deckId').openCursor(IDBKeyRange.only(deckId));
+
+      req.onsuccess = (event) => {
+        if (!homeActive() || state.backgroundPaused) {
+          cancelled = true;
+          try { tx.abort(); } catch (_) {}
+          return;
+        }
+        const cursor = event.target.result;
+        if (!cursor) {
+          resolve(cards);
+          return;
+        }
+        cards.push(summaryCard(cursor.value));
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+      tx.onerror = () => cancelled ? resolve(null) : reject(tx.error);
+      tx.onabort = () => cancelled ? resolve(null) : reject(tx.error || new Error('Leitura cancelada.'));
+    });
   }
 
   async function homeSummary(deckId) {
     const cached = state.summaryCache.get(deckId);
     if (cached) return cached.slice();
 
-    const counts = await ensureCounts();
-    const count = Number(counts.get(deckId) || 0);
-    scheduleDetailScan();
-    return placeholders(deckId, count);
+    if (state.countMap) {
+      const count = Number(state.countMap.get(deckId) || 0);
+      queueDetail(deckId);
+      return placeholders(deckId, count);
+    }
+
+    ensureCounts();
+    return [];
+  }
+
+  function pauseBackground() {
+    state.backgroundPaused = true;
+    state.detailRunning = false;
+  }
+
+  function resumeBackground() {
+    state.backgroundPaused = false;
+    if (homeActive()) {
+      ensureCounts();
+      scheduleDetailWork();
+    }
+  }
+
+  function invalidateDeck(deckId, countChanged) {
+    if (!deckId) return;
+    state.summaryCache.delete(deckId);
+    state.placeholderCache.delete(deckId);
+    state.detailQueued.delete(deckId);
+    state.detailQueue = state.detailQueue.filter((id) => id !== deckId);
+    if (countChanged) state.countMap = null;
+    if (homeActive() && !state.backgroundPaused) queueDetail(deckId);
   }
 
   function invalidateAll() {
@@ -190,53 +247,37 @@
     state.countPromise = null;
     state.summaryCache.clear();
     state.placeholderCache.clear();
-    state.detailScheduled = false;
+    state.detailQueue = [];
+    state.detailQueued.clear();
+    state.detailRunning = false;
+    if (homeActive() && !state.backgroundPaused) ensureCounts();
   }
 
-  function invalidateDeck(deckId, countChanged) {
-    if (!deckId) return;
-    state.summaryCache.delete(deckId);
-    state.placeholderCache.delete(deckId);
-    if (countChanged) state.countMap = null;
-    state.detailScheduled = false;
-  }
-
-  function wrapOpenConfig(api, forceFull) {
+  function wrapStudyApi(api) {
     if (!api || typeof api.openConfig !== 'function' || api.openConfig.__oitucardsStartupOptimizer) return;
     const original = api.openConfig;
     const wrapped = async function (...args) {
-      if (forceFull) state.fullReadDepth += 1;
+      pauseBackground();
+      state.fullReadDepth += 1;
       try {
         return await original.apply(this, args);
       } finally {
-        if (forceFull) state.fullReadDepth = Math.max(0, state.fullReadDepth - 1);
+        state.fullReadDepth = Math.max(0, state.fullReadDepth - 1);
+        if (homeActive()) resumeBackground();
       }
     };
     Object.defineProperty(wrapped, '__oitucardsStartupOptimizer', { value: true });
     api.openConfig = wrapped;
   }
 
-  function forceFullForExport(button) {
-    state.forceFullUntil = Date.now() + 10 * 60 * 1000;
-    if (!button) return;
-    let sawDisabled = button.disabled;
-    const observer = new MutationObserver(() => {
-      if (button.disabled) {
-        sawDisabled = true;
-        return;
-      }
-      if (!sawDisabled) return;
-      observer.disconnect();
-      state.forceFullUntil = 0;
-    });
-    observer.observe(button, { attributes: true, attributeFilter: ['disabled'] });
-  }
-
   OituDB.getCardsByDeck = async (deckId) => {
-    if (state.fullReadDepth > 0 || Date.now() < state.forceFullUntil || !homeActive()) {
-      return previousGetCardsByDeck(deckId);
+    if (state.fullReadDepth > 0 || Date.now() < state.forceFullUntil) return fullRead(deckId);
+    if (state.pendingDeckId && state.pendingDeckId === deckId) {
+      state.pendingDeckId = null;
+      return fullRead(deckId);
     }
-    return homeSummary(deckId);
+    if (homeActive()) return homeSummary(deckId);
+    return previousGetCardsByDeck(deckId);
   };
 
   OituDB.addCard = async (...args) => {
@@ -264,37 +305,63 @@
     return result;
   };
 
-  wrapOpenConfig(window.OituMultiStudy, true);
+  wrapStudyApi(window.OituStudy);
+  wrapStudyApi(window.OituMultiStudy);
 
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
 
+    const deckOpen = target.closest('[data-deck-id] .deck-name-button,[data-deck-id] [data-action="edit-deck"]');
+    if (deckOpen) {
+      state.pendingDeckId = deckOpen.closest('[data-deck-id]')?.dataset.deckId || null;
+      pauseBackground();
+      setTimeout(() => {
+        if (homeActive()) resumeBackground();
+      }, 1200);
+    }
+
+    const studyTrigger = target.closest('[data-study-folder],#studySelectedButton');
+    if (studyTrigger) pauseBackground();
+
     const exportButton = target.closest('#exportSelectedButton,#deckExportButton');
-    if (exportButton) forceFullForExport(exportButton);
+    if (exportButton) {
+      pauseBackground();
+      state.forceFullUntil = Date.now() + 10 * 60 * 1000;
+      let sawDisabled = exportButton.disabled;
+      const observer = new MutationObserver(() => {
+        if (exportButton.disabled) { sawDisabled = true; return; }
+        if (!sawDisabled) return;
+        observer.disconnect();
+        state.forceFullUntil = 0;
+        if (homeActive()) resumeBackground();
+      });
+      observer.observe(exportButton, { attributes: true, attributeFilter: ['disabled'] });
+    }
 
     const importButton = target.closest('#confirmImportButton');
     if (importButton) {
+      pauseBackground();
       invalidateAll();
       let sawDisabled = importButton.disabled;
       const observer = new MutationObserver(() => {
-        if (importButton.disabled) {
-          sawDisabled = true;
-          return;
-        }
+        if (importButton.disabled) { sawDisabled = true; return; }
         if (!sawDisabled) return;
         observer.disconnect();
         invalidateAll();
+        if (homeActive()) resumeBackground();
       });
       observer.observe(importButton, { attributes: true, attributeFilter: ['disabled'] });
     }
   }, true);
 
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && homeActive()) resumeBackground();
+  });
+
   window.OituLibraryStartupOptimizer = {
     invalidateAll,
-    rescan: () => {
-      invalidateAll();
-      if (homeActive()) scheduleDetailScan();
-    }
+    pauseBackground,
+    resumeBackground
   };
 })();
