@@ -30,6 +30,19 @@
     if (system && system.textContent !== "Padrão OituCards") system.textContent = "Padrão OituCards";
   }
 
+  function ensureCreateOption(select) {
+    const matches = [...select.options].filter((option) => option.value === CREATE_VALUE);
+    matches.slice(1).forEach((option) => option.remove());
+    let option = matches[0] || null;
+    if (!option) {
+      option = new Option("＋ Criar novo modelo…", CREATE_VALUE);
+      select.add(option);
+      return;
+    }
+    if (option.textContent !== "＋ Criar novo modelo…") option.textContent = "＋ Criar novo modelo…";
+    if (select.options[select.options.length - 1] !== option) select.appendChild(option);
+  }
+
   function decorateGlobalSelect() {
     if (decorating) return;
     const select = $("#globalReviewModelSelect");
@@ -37,10 +50,11 @@
     decorating = true;
     try {
       normalizeSystemOption(select);
-      [...select.options].filter((option) => option.value === CREATE_VALUE).forEach((option) => option.remove());
-      select.add(new Option("＋ Criar novo modelo…", CREATE_VALUE));
+      ensureCreateOption(select);
       const current = currentGlobalValue();
-      if ([...select.options].some((option) => option.value === current)) select.value = current;
+      if (select.value === CREATE_VALUE && [...select.options].some((option) => option.value === current)) {
+        select.value = current;
+      }
     } finally {
       decorating = false;
     }
