@@ -1,8 +1,9 @@
 (function () {
-  if (window.__oitucardsReviewPresets) return;
-  window.__oitucardsReviewPresets = true;
+  if (window.__oitucardsReviewModels) return;
+  window.__oitucardsReviewModels = true;
 
-  const STORAGE_KEY = "OituCardsReviewPresetsV1";
+  const MODEL_STORAGE_KEY = "OituCardsReviewPresetsV1";
+  const GLOBAL_MODEL_KEY = "OituCardsGlobalReviewModelV1";
   const SYSTEM_SETTINGS = Object.freeze({
     newIntervals: Object.freeze({ hard: 1, medium: 2, good: 4, easy: 7 }),
     multipliers: Object.freeze({ hard: 1.2, medium: 1.8, good: 2.5, easy: 4 }),
@@ -15,15 +16,18 @@
   let currentDeckId = null;
   let editorDeckId = null;
   let reSubmittingStudy = false;
-  let modalResolve = null;
+  let modelModalSource = "global";
+  let nativeAddDeck = null;
+  let nativeUpdateDeck = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
   function cloneSettings(settings) {
+    const normalized = normalizeSettings(settings);
     return {
-      newIntervals: { ...settings.newIntervals },
-      multipliers: { ...settings.multipliers },
-      maxIntervalDays: settings.maxIntervalDays
+      newIntervals: { ...normalized.newIntervals },
+      multipliers: { ...normalized.multipliers },
+      maxIntervalDays: normalized.maxIntervalDays
     };
   }
 
@@ -31,9 +35,9 @@
     const source = raw || {};
     const intervals = source.newIntervals || source || {};
     const multipliers = source.multipliers || {};
-    const max = Number.parseInt(source.maxIntervalDays, 10);
-    const maxIntervalDays = Number.isInteger(max) && max >= 1 && max <= MAX_DAYS
-      ? max
+    const parsedMax = Number.parseInt(source.maxIntervalDays, 10);
+    const maxIntervalDays = Number.isInteger(parsedMax) && parsedMax >= 1 && parsedMax <= MAX_DAYS
+      ? parsedMax
       : SYSTEM_SETTINGS.maxIntervalDays;
 
     const newIntervals = {};
@@ -63,9 +67,9 @@
     );
   }
 
-  function readPresets() {
+  function readModels() {
     try {
-      const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      const parsed = JSON.parse(localStorage.getItem(MODEL_STORAGE_KEY) || "[]");
       if (!Array.isArray(parsed)) return [];
       return parsed
         .filter((item) => item && typeof item.id === "string" && typeof item.name === "string" && item.settings)
@@ -77,27 +81,57 @@
     }
   }
 
-  function writePresets(presets) {
+  function writeModels(models) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
+      localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(models));
       return true;
     } catch (error) {
-      console.error("OituCards: não foi possível salvar os padrões de revisão.", error);
+      console.error("OituCards: não foi possível salvar os modelos de revisão.", error);
       return false;
     }
   }
 
-  function presetByValue(value) {
-    if (!value?.startsWith("preset:")) return null;
-    const id = value.slice(7);
-    return readPresets().find((preset) => preset.id === id) || null;
+  function normalizeModelValue(value) {
+    if (value === "system" || value === "global" || value === "custom") return value;
+    if (value?.startsWith("preset:")) return `model:${value.slice(7)}`;
+    if (value?.startsWith("model:")) return value;
+    return "system";
   }
 
-  function settingsForSelection(value, deckSettings) {
-    if (value === "system") return cloneSettings(SYSTEM_SETTINGS);
-    const preset = presetByValue(value);
-    if (preset) return cloneSettings(preset.settings);
-    return normalizeSettings(deckSettings);
+  function modelByValue(value) {
+    const normalized = normalizeModelValue(value);
+    if (!normalized.startsWith("model:")) return null;
+    const id = normalized.slice(6);
+    return readModels().find((model) => model.id === id) || null;
+  }
+
+  function globalSelection() {
+    const raw = normalizeModelValue(localStorage.getItem(GLOBAL_MODEL_KEY) || "system");
+    if (raw.startsWith("model:") && !modelByValue(raw)) return "system";
+    return raw === "global" || raw === "custom" ? "system" : raw;
+  }
+
+  function settingsForValue(value, fallback = SYSTEM_SETTINGS) {
+    const normalized = normalizeModelValue(value);
+    if (normalized === "global") return settingsForValue(globalSelection(), fallback);
+    if (normalized === "system") return cloneSettings(SYSTEM_SETTINGS);
+    const model = modelByValue(normalized);
+    if (model) return cloneSettings(model.settings);
+    return cloneSettings(fallback);
+  }
+
+  function modelLabel(value) {
+    const normalized = normalizeModelValue(value);
+    if (normalized === "global") return `Configuração geral — ${modelLabel(globalSelection())}`;
+    if (normalized === "system") return "Padrão OituCards";
+    if (normalized === "custom") return "Ajuste manual deste baralho";
+    return modelByValue(normalized)?.name || "Modelo de revisão";
+  }
+
+  function modelValueForSettings(settings) {
+    if (settingsEqual(settings, SYSTEM_SETTINGS)) return "system";
+    const match = readModels().find((model) => settingsEqual(settings, model.settings));
+    return match ? `model:${match.id}` : null;
   }
 
   function formatSettings(settings) {
@@ -107,142 +141,345 @@
       `Máx.: ${s.maxIntervalDays} dias`;
   }
 
+  function followsGlobal(deck) {
+    if (!deck) return false;
+    if (deck.reviewModelMode === "global") return true;
+    if (deck.reviewModelMode === "manual") return false;
+    if (!deck.reviewSettings) return true;
+    return settingsEqual(deck.reviewSettings, SYSTEM_SETTINGS);
+  }
+
+  function selectionForDeck(deck) {
+    if (!deck) return "global";
+    if (deck.reviewModelMode === "global") return "global";
+    if (deck.reviewModelMode === "manual") {
+      const stored = normalizeModelValue(deck.reviewModelId || "custom");
+      if (stored === "system") return "system";
+      if (stored.startsWith("model:") && modelByValue(stored)) return stored;
+      return modelValueForSettings(deck.reviewSettings) || "custom";
+    }
+    if (followsGlobal(deck)) return "global";
+    return modelValueForSettings(deck.reviewSettings) || "custom";
+  }
+
+  function patchDatabase() {
+    if (!window.OituDB || OituDB.__reviewModelsPatched) return;
+    OituDB.__reviewModelsPatched = true;
+    nativeAddDeck = OituDB.addDeck.bind(OituDB);
+    nativeUpdateDeck = OituDB.updateDeck.bind(OituDB);
+
+    OituDB.addDeck = async function (...args) {
+      const deck = await nativeAddDeck(...args);
+      try {
+        const value = globalSelection();
+        return await nativeUpdateDeck(deck.id, {
+          reviewSettings: settingsForValue(value),
+          reviewModelMode: "global",
+          reviewModelId: value
+        });
+      } catch (error) {
+        console.warn("OituCards: o baralho foi criado, mas a configuração global de revisão não pôde ser aplicada.", error);
+        return deck;
+      }
+    };
+
+    OituDB.updateDeck = async function (id, patch) {
+      let nextPatch = patch;
+      if (patch?.reviewSettings && !Object.prototype.hasOwnProperty.call(patch, "reviewModelMode")) {
+        nextPatch = {
+          ...patch,
+          reviewModelMode: "manual",
+          reviewModelId: modelValueForSettings(patch.reviewSettings)
+        };
+      }
+      return nativeUpdateDeck(id, nextPatch);
+    };
+  }
+
+  async function applyGlobalSelection(value) {
+    const normalized = normalizeModelValue(value);
+    const safeValue = normalized.startsWith("model:") && modelByValue(normalized) ? normalized : "system";
+    localStorage.setItem(GLOBAL_MODEL_KEY, safeValue);
+    const settings = settingsForValue(safeValue);
+    const decks = await OituDB.getDecks();
+    const followers = decks.filter(followsGlobal);
+
+    await Promise.all(followers.map((deck) => nativeUpdateDeck(deck.id, {
+      reviewSettings: cloneSettings(settings),
+      reviewModelMode: "global",
+      reviewModelId: safeValue
+    })));
+
+    refreshAllModelSelectors();
+    return followers.length;
+  }
+
+  async function applySelectionToDeck(deckId, value, mode = "manual") {
+    if (!deckId) return null;
+    const normalized = normalizeModelValue(value);
+    if (normalized === "custom") return OituDB.getDeck(deckId);
+    const effectiveValue = normalized === "global" ? globalSelection() : normalized;
+    const settings = settingsForValue(effectiveValue);
+    return nativeUpdateDeck(deckId, {
+      reviewSettings: cloneSettings(settings),
+      reviewModelMode: mode === "global" || normalized === "global" ? "global" : "manual",
+      reviewModelId: effectiveValue
+    });
+  }
+
   function ensureStyles() {
     if ($('link[data-oitucards-review-presets-css]')) return;
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = "css/review-presets.css?v=20260825-1526";
+    link.href = "css/review-presets.css?v=20260825-1548";
     link.dataset.oitucardsReviewPresetsCss = "true";
     document.head.appendChild(link);
   }
 
-  function studyPresetMarkup() {
+  function settingsPanelMarkup() {
     return `
-      <div id="studyReviewPresetSetting" class="study-setting review-preset-setting">
-        <div>
-          <label class="study-setting-title" for="studyReviewPresetSelect">Padrão de revisão</label>
-          <span class="study-setting-help">Escolha a regra que calculará os próximos intervalos deste baralho.</span>
+      <div id="siteSettingsPanel" class="site-settings-panel" aria-hidden="true">
+        <div class="site-settings-header">
+          <strong>Configurações</strong>
+          <span>Preferências deste navegador</span>
         </div>
-        <div class="review-preset-control">
-          <select id="studyReviewPresetSelect" class="text-input review-preset-select"></select>
-          <p id="studyReviewPresetPreview" class="review-preset-preview"></p>
-          <p class="review-preset-transition-note">Trocar o padrão não altera datas já agendadas. A nova regra passa a valer quando cada card for respondido novamente.</p>
+
+        <div class="site-settings-section">
+          <span class="site-settings-label">Tema</span>
+          <div class="site-theme-options" role="group" aria-label="Tema do site">
+            <button type="button" data-site-theme="light">Claro</button>
+            <button type="button" data-site-theme="dark">Escuro</button>
+          </div>
+        </div>
+
+        <div class="site-settings-section site-review-global-section">
+          <label class="site-settings-label" for="globalReviewModelSelect">Modelo de revisão geral</label>
+          <select id="globalReviewModelSelect" class="text-input"></select>
+          <p id="globalReviewModelHelp" class="site-settings-help"></p>
+          <button id="createReviewModelFromSettings" class="button secondary compact-settings-button" type="button">+ Criar modelo de revisão</button>
+          <p id="globalReviewModelStatus" class="site-settings-status" aria-live="polite"></p>
         </div>
       </div>`;
   }
 
-  function modalMarkup() {
+  function studyModelMarkup() {
     return `
-      <div id="reviewPresetModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="reviewPresetModalTitle">
-        <div class="modal small-modal review-preset-modal">
+      <div id="studyReviewModelSetting" class="study-setting review-preset-setting">
+        <div>
+          <label class="study-setting-title" for="studyReviewModelSelect">Modelo de revisão</label>
+          <span class="study-setting-help">Escolha a regra de revisão deste baralho. Você também pode mantê-lo acompanhando a configuração geral.</span>
+        </div>
+        <div class="review-preset-control">
+          <select id="studyReviewModelSelect" class="text-input review-preset-select"></select>
+          <p id="studyReviewModelPreview" class="review-preset-preview"></p>
+          <p class="review-preset-transition-note">A troca não altera revisões que já estão agendadas. A nova regra passa a valer no próximo cálculo de intervalo de cada card.</p>
+        </div>
+      </div>`;
+  }
+
+  function reviewReuseMarkup() {
+    return `
+      <div id="reviewModelReuseBlock" class="review-model-reuse-block">
+        <div>
+          <strong>Usar um modelo de revisão</strong>
+          <p>Carregue um modelo salvo para aproveitar as mesmas regras neste baralho.</p>
+        </div>
+        <div class="review-model-reuse-controls">
+          <select id="reviewSettingsModelSelect" class="text-input"></select>
+          <button id="loadReviewModelButton" class="button secondary" type="button">Carregar modelo</button>
+        </div>
+      </div>`;
+  }
+
+  function saveModelActionMarkup() {
+    return `
+      <div id="saveReviewModelAction" class="save-review-model-action">
+        <button id="saveReviewModelButton" class="button secondary" type="button">Salvar como modelo de revisão</button>
+        <span>Salva uma cópia destas regras para usar em outros baralhos.</span>
+      </div>`;
+  }
+
+  function modelEditorMarkup() {
+    return `
+      <div id="reviewModelModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="reviewModelModalTitle">
+        <div class="modal review-model-modal">
           <div class="modal-header">
             <div>
               <p class="eyebrow">Revisão espaçada</p>
-              <h2 id="reviewPresetModalTitle">Salvar padrão</h2>
+              <h2 id="reviewModelModalTitle">Criar modelo de revisão</h2>
             </div>
-            <button id="reviewPresetModalClose" class="icon-button modal-close" type="button" aria-label="Fechar">×</button>
+            <button id="reviewModelModalClose" class="icon-button modal-close" type="button" aria-label="Fechar">×</button>
           </div>
-          <form id="reviewPresetNameForm">
-            <label class="field-label" for="reviewPresetNameInput">Nome do padrão</label>
-            <input id="reviewPresetNameInput" class="text-input" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Revisão intensiva" required />
-            <p class="field-hint">O padrão salvará uma cópia dos intervalos e multiplicadores que estão preenchidos agora.</p>
-            <p id="reviewPresetModalStatus" class="review-settings-status" aria-live="polite"></p>
+
+          <form id="reviewModelForm">
+            <label class="field-label" for="reviewModelName">Nome do modelo</label>
+            <input id="reviewModelName" class="text-input" type="text" maxlength="80" autocomplete="off" placeholder="Ex.: Revisão intensiva" required />
+
+            <div class="review-model-modal-section">
+              <strong>Primeira revisão de um card novo</strong>
+              <div class="review-model-fields-grid">
+                <label><span>Difícil</span><div><input id="modelHardDays" class="text-input" type="number" min="1" max="3650" step="1" required><small>dias</small></div></label>
+                <label><span>Médio</span><div><input id="modelMediumDays" class="text-input" type="number" min="1" max="3650" step="1" required><small>dias</small></div></label>
+                <label><span>Bom</span><div><input id="modelGoodDays" class="text-input" type="number" min="1" max="3650" step="1" required><small>dias</small></div></label>
+                <label><span>Fácil</span><div><input id="modelEasyDays" class="text-input" type="number" min="1" max="3650" step="1" required><small>dias</small></div></label>
+              </div>
+            </div>
+
+            <div class="review-model-modal-section">
+              <strong>Multiplicadores das revisões seguintes</strong>
+              <div class="review-model-fields-grid">
+                <label><span>Difícil</span><div><input id="modelHardMultiplier" class="text-input" type="number" min="1" max="10" step="0.1" required><small>×</small></div></label>
+                <label><span>Médio</span><div><input id="modelMediumMultiplier" class="text-input" type="number" min="1" max="10" step="0.1" required><small>×</small></div></label>
+                <label><span>Bom</span><div><input id="modelGoodMultiplier" class="text-input" type="number" min="1" max="10" step="0.1" required><small>×</small></div></label>
+                <label><span>Fácil</span><div><input id="modelEasyMultiplier" class="text-input" type="number" min="1" max="10" step="0.1" required><small>×</small></div></label>
+              </div>
+            </div>
+
+            <div class="review-model-modal-section review-model-max-row">
+              <label><span>Intervalo máximo</span><div><input id="modelMaxDays" class="text-input" type="number" min="1" max="3650" step="1" required><small>dias</small></div></label>
+            </div>
+
+            <p id="reviewModelModalStatus" class="review-settings-status" aria-live="polite"></p>
             <div class="modal-actions">
-              <button id="reviewPresetModalCancel" class="button ghost" type="button">Cancelar</button>
-              <button class="button primary" type="submit">Salvar padrão</button>
+              <button id="reviewModelModalCancel" class="button ghost" type="button">Cancelar</button>
+              <button class="button primary" type="submit">Salvar modelo</button>
             </div>
           </form>
         </div>
       </div>`;
   }
 
+  function ensureSettingsPanel() {
+    const button = $("#themeToggle");
+    if (!button) return;
+    button.textContent = "⚙";
+    button.title = "Configurações";
+    button.setAttribute("aria-label", "Abrir configurações");
+    button.setAttribute("aria-expanded", "false");
+    button.classList.add("site-settings-trigger");
+
+    if (!button.parentElement?.classList.contains("site-settings-anchor")) {
+      const anchor = document.createElement("div");
+      anchor.className = "site-settings-anchor";
+      button.parentNode.insertBefore(anchor, button);
+      anchor.appendChild(button);
+      anchor.insertAdjacentHTML("beforeend", settingsPanelMarkup());
+    }
+    syncThemeControls();
+    refreshGlobalModelSelect();
+  }
+
+  function ensureStudyUI() {
+    const normalFilters = $("#studyNormalFilterSetting");
+    if (normalFilters && !$("#studyReviewModelSetting")) normalFilters.insertAdjacentHTML("afterend", studyModelMarkup());
+  }
+
+  function ensureReviewSettingsUI() {
+    const form = $("#reviewSettingsForm");
+    if (!form) return;
+    if (!$("#reviewModelReuseBlock")) form.insertAdjacentHTML("afterbegin", reviewReuseMarkup());
+    const summary = $("#reviewRuleSummary");
+    if (summary && !$("#saveReviewModelAction")) summary.insertAdjacentHTML("afterend", saveModelActionMarkup());
+  }
+
+  function ensureModelModal() {
+    if (!$("#reviewModelModal")) document.body.insertAdjacentHTML("beforeend", modelEditorMarkup());
+  }
+
   function ensureUI() {
     ensureStyles();
-
-    const normalFilters = $("#studyNormalFilterSetting");
-    if (normalFilters && !$("#studyReviewPresetSetting")) {
-      normalFilters.insertAdjacentHTML("afterend", studyPresetMarkup());
-    }
-
-    const heading = $("#reviewSettingsView .review-settings-heading");
-    const restore = $("#restoreReviewDefaultsButton");
-    if (heading && restore && !$("#saveReviewPresetButton")) {
-      let actions = $(".review-preset-heading-actions", heading);
-      if (!actions) {
-        actions = document.createElement("div");
-        actions.className = "review-preset-heading-actions";
-        restore.before(actions);
-        actions.appendChild(restore);
-      }
-      const save = document.createElement("button");
-      save.id = "saveReviewPresetButton";
-      save.className = "button secondary";
-      save.type = "button";
-      save.textContent = "Salvar padrão";
-      actions.prepend(save);
-    }
-
-    if (!$("#reviewPresetModal")) document.body.insertAdjacentHTML("beforeend", modalMarkup());
-    refreshPresetOptions();
+    ensureSettingsPanel();
+    ensureStudyUI();
+    ensureReviewSettingsUI();
+    ensureModelModal();
+    refreshAllModelSelectors();
   }
 
-  function refreshPresetOptions() {
-    const select = $("#studyReviewPresetSelect");
+  function addModelOptions(select, { includeGlobal = false, includeCustom = false } = {}) {
     if (!select) return;
-    const previous = select.value;
-    const presets = readPresets();
     select.innerHTML = "";
-
-    const current = new Option("Ajuste atual do baralho", "deck");
-    const system = new Option("Padrão do sistema — 1 / 2 / 4 / 7 dias", "system");
-    select.add(current);
-    select.add(system);
-
-    if (presets.length) {
+    if (includeGlobal) select.add(new Option(`Configuração geral — ${modelLabel(globalSelection())}`, "global"));
+    select.add(new Option("Padrão OituCards — 1 / 2 / 4 / 7 dias", "system"));
+    if (includeCustom) select.add(new Option("Ajuste manual deste baralho", "custom"));
+    const models = readModels();
+    if (models.length) {
       const group = document.createElement("optgroup");
-      group.label = "Meus padrões";
-      presets.forEach((preset) => group.appendChild(new Option(preset.name, `preset:${preset.id}`)));
+      group.label = "Meus modelos";
+      models.forEach((model) => group.appendChild(new Option(model.name, `model:${model.id}`)));
       select.appendChild(group);
     }
-
-    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
   }
 
-  async function refreshStudyPresetSelection(deckId = currentDeckId) {
-    ensureUI();
-    const select = $("#studyReviewPresetSelect");
+  function refreshGlobalModelSelect() {
+    const select = $("#globalReviewModelSelect");
+    if (!select) return;
+    addModelOptions(select);
+    select.value = globalSelection();
+    const help = $("#globalReviewModelHelp");
+    if (help) help.textContent = `${modelLabel(globalSelection())}. Novos baralhos e os baralhos que seguem a configuração geral usarão este modelo.`;
+  }
+
+  function refreshReviewSettingsModelSelect() {
+    const select = $("#reviewSettingsModelSelect");
+    if (!select) return;
+    addModelOptions(select, { includeGlobal: true });
+    select.value = "global";
+  }
+
+  async function refreshStudyModelSelection(deckId = currentDeckId) {
+    ensureStudyUI();
+    const select = $("#studyReviewModelSelect");
     if (!select || !deckId) return;
     const deck = await OituDB.getDeck(deckId);
     if (!deck) return;
-
-    const settings = normalizeSettings(deck.reviewSettings);
-    refreshPresetOptions();
-    let value = "deck";
-    if (settingsEqual(settings, SYSTEM_SETTINGS)) value = "system";
-    else {
-      const match = readPresets().find((preset) => settingsEqual(settings, preset.settings));
-      if (match) value = `preset:${match.id}`;
-    }
-    select.value = value;
-    updateStudyPresetPreview(deck);
+    const selection = selectionForDeck(deck);
+    addModelOptions(select, { includeGlobal: true, includeCustom: selection === "custom" });
+    select.value = [...select.options].some((option) => option.value === selection) ? selection : "custom";
+    updateStudyModelPreview(deck);
   }
 
-  async function updateStudyPresetPreview(deck = null) {
-    const select = $("#studyReviewPresetSelect");
-    const preview = $("#studyReviewPresetPreview");
+  function refreshAllModelSelectors() {
+    refreshGlobalModelSelect();
+    refreshReviewSettingsModelSelect();
+    if (currentDeckId && $("#studyConfigView")?.classList.contains("active")) refreshStudyModelSelection(currentDeckId);
+  }
+
+  async function updateStudyModelPreview(deck = null) {
+    const select = $("#studyReviewModelSelect");
+    const preview = $("#studyReviewModelPreview");
     if (!select || !preview) return;
     const currentDeck = deck || (currentDeckId ? await OituDB.getDeck(currentDeckId) : null);
-    const selected = select.value;
-    const settings = settingsForSelection(selected, currentDeck?.reviewSettings);
-    const label = selected === "deck"
-      ? "Configuração atual"
-      : selected === "system"
-        ? "Padrão do sistema"
-        : presetByValue(selected)?.name || "Padrão salvo";
-    preview.innerHTML = `<strong>${label}:</strong> ${formatSettings(settings)}.`;
+    const value = normalizeModelValue(select.value);
+    const settings = value === "custom"
+      ? normalizeSettings(currentDeck?.reviewSettings)
+      : settingsForValue(value, currentDeck?.reviewSettings || SYSTEM_SETTINGS);
+    preview.innerHTML = `<strong>${modelLabel(value)}:</strong> ${formatSettings(settings)}.`;
   }
 
-  function readReviewSettingsForm() {
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("oitucards-theme", theme);
+    syncThemeControls();
+  }
+
+  function syncThemeControls() {
+    const current = document.documentElement.dataset.theme || localStorage.getItem("oitucards-theme") || "light";
+    document.querySelectorAll("[data-site-theme]").forEach((button) => {
+      button.classList.toggle("is-active", button.dataset.siteTheme === current);
+      button.setAttribute("aria-pressed", String(button.dataset.siteTheme === current));
+    });
+  }
+
+  function setSettingsPanel(open) {
+    const panel = $("#siteSettingsPanel");
+    const trigger = $("#themeToggle");
+    if (!panel || !trigger) return;
+    panel.classList.toggle("is-open", open);
+    panel.setAttribute("aria-hidden", String(!open));
+    trigger.setAttribute("aria-expanded", String(open));
+  }
+
+  function readMainReviewForm() {
     const maxIntervalDays = Number.parseInt($("#reviewMaxDays")?.value, 10);
     const newIntervals = {
       hard: Number.parseInt($("#reviewHardDays")?.value, 10),
@@ -256,95 +493,174 @@
       good: Number.parseFloat($("#reviewGoodMultiplier")?.value),
       easy: Number.parseFloat($("#reviewEasyMultiplier")?.value)
     };
+    return validateSettings({ newIntervals, multipliers, maxIntervalDays });
+  }
 
+  function validateSettings(settings) {
+    const maxIntervalDays = Number.parseInt(settings?.maxIntervalDays, 10);
+    const newIntervals = settings?.newIntervals || {};
+    const multipliers = settings?.multipliers || {};
     if (!Number.isInteger(maxIntervalDays) || maxIntervalDays < 1 || maxIntervalDays > MAX_DAYS) {
       return { error: `O intervalo máximo deve ficar entre 1 e ${MAX_DAYS} dias.` };
     }
-    if (Object.values(newIntervals).some((value) => !Number.isInteger(value) || value < 1 || value > maxIntervalDays)) {
+    if (RATINGS.some((rating) => !Number.isInteger(Number(newIntervals[rating])) || Number(newIntervals[rating]) < 1 || Number(newIntervals[rating]) > maxIntervalDays)) {
       return { error: "Os intervalos iniciais devem ficar entre 1 dia e o limite máximo definido." };
     }
-    if (Object.values(multipliers).some((value) => !Number.isFinite(value) || value < 1 || value > MAX_MULTIPLIER)) {
+    if (RATINGS.some((rating) => !Number.isFinite(Number(multipliers[rating])) || Number(multipliers[rating]) < 1 || Number(multipliers[rating]) > MAX_MULTIPLIER)) {
       return { error: `Os multiplicadores devem ficar entre 1,0 e ${MAX_MULTIPLIER}.` };
     }
-    return { settings: { newIntervals, multipliers, maxIntervalDays } };
+    return { settings: normalizeSettings(settings) };
   }
 
-  function openNameModal() {
-    const modal = $("#reviewPresetModal");
-    const input = $("#reviewPresetNameInput");
-    const status = $("#reviewPresetModalStatus");
-    if (!modal || !input) return Promise.resolve(null);
-    if (status) status.textContent = "";
-    input.value = "";
-    modal.classList.remove("hidden");
+  function fillMainReviewForm(settings) {
+    const s = normalizeSettings(settings);
+    const values = {
+      reviewHardDays: s.newIntervals.hard,
+      reviewMediumDays: s.newIntervals.medium,
+      reviewGoodDays: s.newIntervals.good,
+      reviewEasyDays: s.newIntervals.easy,
+      reviewHardMultiplier: s.multipliers.hard,
+      reviewMediumMultiplier: s.multipliers.medium,
+      reviewGoodMultiplier: s.multipliers.good,
+      reviewEasyMultiplier: s.multipliers.easy,
+      reviewMaxDays: s.maxIntervalDays
+    };
+    Object.entries(values).forEach(([id, value]) => {
+      const input = $(`#${id}`);
+      if (!input) return;
+      input.value = value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  function fillModelModal(settings) {
+    const s = normalizeSettings(settings);
+    const values = {
+      modelHardDays: s.newIntervals.hard,
+      modelMediumDays: s.newIntervals.medium,
+      modelGoodDays: s.newIntervals.good,
+      modelEasyDays: s.newIntervals.easy,
+      modelHardMultiplier: s.multipliers.hard,
+      modelMediumMultiplier: s.multipliers.medium,
+      modelGoodMultiplier: s.multipliers.good,
+      modelEasyMultiplier: s.multipliers.easy,
+      modelMaxDays: s.maxIntervalDays
+    };
+    Object.entries(values).forEach(([id, value]) => { if ($(`#${id}`)) $(`#${id}`).value = value; });
+  }
+
+  function readModelModal() {
+    return validateSettings({
+      newIntervals: {
+        hard: Number.parseInt($("#modelHardDays")?.value, 10),
+        medium: Number.parseInt($("#modelMediumDays")?.value, 10),
+        good: Number.parseInt($("#modelGoodDays")?.value, 10),
+        easy: Number.parseInt($("#modelEasyDays")?.value, 10)
+      },
+      multipliers: {
+        hard: Number.parseFloat($("#modelHardMultiplier")?.value),
+        medium: Number.parseFloat($("#modelMediumMultiplier")?.value),
+        good: Number.parseFloat($("#modelGoodMultiplier")?.value),
+        easy: Number.parseFloat($("#modelEasyMultiplier")?.value)
+      },
+      maxIntervalDays: Number.parseInt($("#modelMaxDays")?.value, 10)
+    });
+  }
+
+  function openModelModal(settings, source = "global") {
+    ensureModelModal();
+    modelModalSource = source;
+    $("#reviewModelName").value = "";
+    $("#reviewModelModalStatus").textContent = "";
+    fillModelModal(settings || SYSTEM_SETTINGS);
+    $("#reviewModelModal").classList.remove("hidden");
     document.body.style.overflow = "hidden";
-    requestAnimationFrame(() => input.focus());
-    return new Promise((resolve) => { modalResolve = resolve; });
+    requestAnimationFrame(() => $("#reviewModelName")?.focus());
   }
 
-  function closeNameModal(value = null) {
-    $("#reviewPresetModal")?.classList.add("hidden");
-    document.body.style.overflow = "";
-    const resolve = modalResolve;
-    modalResolve = null;
-    if (resolve) resolve(value);
+  function closeModelModal() {
+    $("#reviewModelModal")?.classList.add("hidden");
+    $("#reviewModelModalStatus").textContent = "";
+    if (!document.querySelector(".modal-backdrop:not(.hidden)")) document.body.style.overflow = "";
   }
 
-  async function saveCurrentAsPreset() {
-    const result = readReviewSettingsForm();
-    const status = $("#reviewSettingsStatus");
+  async function saveModelFromModal(event) {
+    event.preventDefault();
+    const name = String($("#reviewModelName")?.value || "").trim();
+    const status = $("#reviewModelModalStatus");
+    if (!name) {
+      if (status) status.textContent = "Digite um nome para o modelo.";
+      $("#reviewModelName")?.focus();
+      return;
+    }
+    const result = readModelModal();
     if (result.error) {
       if (status) status.textContent = result.error;
       return;
     }
 
-    const name = await openNameModal();
-    if (!name) return;
-    const presets = readPresets();
-    const existing = presets.find((preset) => preset.name.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"));
+    const models = readModels();
+    const existing = models.find((model) => model.name.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"));
     const now = new Date().toISOString();
+    let savedId;
 
     if (existing) {
-      if (!window.confirm(`Já existe um padrão chamado “${existing.name}”. Deseja substituí-lo?`)) return;
+      if (!window.confirm(`Já existe um modelo chamado “${existing.name}”. Deseja substituí-lo?`)) return;
       existing.name = name;
       existing.settings = cloneSettings(result.settings);
       existing.updatedAt = now;
+      savedId = existing.id;
     } else {
-      presets.push({
-        id: crypto.randomUUID(),
-        name,
-        settings: cloneSettings(result.settings),
-        createdAt: now,
-        updatedAt: now
-      });
+      savedId = crypto.randomUUID();
+      models.push({ id: savedId, name, settings: cloneSettings(result.settings), createdAt: now, updatedAt: now });
     }
 
-    if (!writePresets(presets)) {
-      if (status) status.textContent = "Não foi possível salvar o padrão neste navegador.";
+    if (!writeModels(models)) {
+      if (status) status.textContent = "Não foi possível salvar o modelo neste navegador.";
       return;
     }
-    refreshPresetOptions();
-    if (status) status.textContent = `Padrão “${name}” salvo. Ele já pode ser usado em outros baralhos.`;
+
+    const savedValue = `model:${savedId}`;
+    const wasGlobal = globalSelection() === savedValue;
+    closeModelModal();
+    refreshAllModelSelectors();
+
+    if (wasGlobal) await applyGlobalSelection(savedValue);
+
+    if (modelModalSource === "review") {
+      const pageStatus = $("#reviewSettingsStatus");
+      if (pageStatus) pageStatus.textContent = `Modelo “${name}” salvo. Ele já está disponível para outros baralhos.`;
+    } else {
+      const globalStatus = $("#globalReviewModelStatus");
+      if (globalStatus) globalStatus.textContent = `Modelo “${name}” salvo.`;
+    }
   }
 
-  async function applySelectedPresetBeforeStudy(event) {
-    if (reSubmittingStudy || event.target?.id !== "studyConfigForm") return;
-    const select = $("#studyReviewPresetSelect");
-    if (!select || select.value === "deck" || !currentDeckId) return;
+  async function loadModelIntoReviewForm() {
+    const select = $("#reviewSettingsModelSelect");
+    const status = $("#reviewSettingsStatus");
+    if (!select) return;
+    const settings = settingsForValue(select.value);
+    fillMainReviewForm(settings);
+    if (status) status.textContent = `${modelLabel(select.value)} carregado. Clique em “Salvar ajustes” para aplicar ao baralho.`;
+  }
 
-    const deck = await OituDB.getDeck(currentDeckId);
-    if (!deck) return;
-    const settings = settingsForSelection(select.value, deck.reviewSettings);
+  async function applyStudySelectionBeforeSubmit(event) {
+    if (reSubmittingStudy || event.target?.id !== "studyConfigForm") return;
+    const select = $("#studyReviewModelSelect");
+    if (!select || !currentDeckId) return;
+    const value = normalizeModelValue(select.value);
+    if (value === "custom") return;
 
     event.preventDefault();
     event.stopImmediatePropagation();
     try {
-      await OituDB.updateDeck(currentDeckId, { reviewSettings: cloneSettings(settings) });
+      await applySelectionToDeck(currentDeckId, value, value === "global" ? "global" : "manual");
       reSubmittingStudy = true;
       event.target.requestSubmit();
     } catch (error) {
       console.error(error);
-      alert("Não foi possível aplicar o padrão de revisão.");
+      alert("Não foi possível aplicar o modelo de revisão.");
     } finally {
       reSubmittingStudy = false;
     }
@@ -353,14 +669,11 @@
   function captureDeckContext(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-
     const deckName = target.closest(".deck-name-button");
-    if (deckName) {
-      const id = deckName.closest("[data-deck-id]")?.dataset.deckId;
-      if (id) {
-        currentDeckId = id;
-        setTimeout(() => refreshStudyPresetSelection(id), 30);
-      }
+    const row = deckName?.closest("[data-deck-id]");
+    if (row?.dataset.deckId) {
+      currentDeckId = row.dataset.deckId;
+      setTimeout(() => refreshStudyModelSelection(currentDeckId), 30);
     }
 
     const edit = target.closest('[data-action="edit-deck"]');
@@ -369,81 +682,144 @@
       if (id) editorDeckId = id;
     }
 
-    if (target.closest("#studyAgainButton") && currentDeckId) {
-      setTimeout(() => refreshStudyPresetSelection(currentDeckId), 40);
-    }
-
     if (target.closest("#reviewSettingsButton") && editorDeckId) currentDeckId = editorDeckId;
+    if (target.closest("#studyAgainButton") && currentDeckId) setTimeout(() => refreshStudyModelSelection(currentDeckId), 40);
   }
 
   function bindEvents() {
-    if (document.documentElement.dataset.oitucardsReviewPresetsBound === "true") return;
-    document.documentElement.dataset.oitucardsReviewPresetsBound = "true";
-
-    document.addEventListener("click", captureDeckContext, true);
-    document.addEventListener("submit", applySelectedPresetBeforeStudy, true);
-
-    document.addEventListener("change", (event) => {
-      if (event.target?.id === "studyReviewPresetSelect") updateStudyPresetPreview();
-    });
+    if (document.documentElement.dataset.oitucardsReviewModelsBound === "true") return;
+    document.documentElement.dataset.oitucardsReviewModelsBound = "true";
 
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
-      if (target.closest("#saveReviewPresetButton")) {
+
+      if (target.closest("#themeToggle")) {
         event.preventDefault();
-        saveCurrentAsPreset();
+        event.stopImmediatePropagation();
+        const panel = $("#siteSettingsPanel");
+        setSettingsPanel(!panel?.classList.contains("is-open"));
         return;
       }
-      if (target.closest("#reviewPresetModalClose,#reviewPresetModalCancel") || target.id === "reviewPresetModal") {
+    }, true);
+
+    document.addEventListener("click", captureDeckContext, true);
+    document.addEventListener("submit", applyStudySelectionBeforeSubmit, true);
+
+    document.addEventListener("click", async (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+
+      const theme = target.closest("[data-site-theme]");
+      if (theme) {
         event.preventDefault();
-        closeNameModal(null);
+        applyTheme(theme.dataset.siteTheme);
+        return;
+      }
+
+      if (target.closest("#createReviewModelFromSettings")) {
+        event.preventDefault();
+        openModelModal(settingsForValue(globalSelection()), "global");
+        return;
+      }
+
+      if (target.closest("#saveReviewModelButton")) {
+        event.preventDefault();
+        const result = readMainReviewForm();
+        if (result.error) {
+          if ($("#reviewSettingsStatus")) $("#reviewSettingsStatus").textContent = result.error;
+          return;
+        }
+        openModelModal(result.settings, "review");
+        return;
+      }
+
+      if (target.closest("#loadReviewModelButton")) {
+        event.preventDefault();
+        await loadModelIntoReviewForm();
+        return;
+      }
+
+      if (target.closest("#reviewModelModalClose,#reviewModelModalCancel") || target.id === "reviewModelModal") {
+        event.preventDefault();
+        closeModelModal();
+        return;
+      }
+
+      const anchor = target.closest(".site-settings-anchor");
+      if (!anchor && $("#siteSettingsPanel")?.classList.contains("is-open")) setSettingsPanel(false);
+    });
+
+    document.addEventListener("change", async (event) => {
+      if (event.target?.id === "studyReviewModelSelect") {
+        updateStudyModelPreview();
+        return;
+      }
+      if (event.target?.id === "globalReviewModelSelect") {
+        const select = event.target;
+        const status = $("#globalReviewModelStatus");
+        select.disabled = true;
+        if (status) status.textContent = "Aplicando configuração…";
+        try {
+          const changed = await applyGlobalSelection(select.value);
+          if (status) status.textContent = changed
+            ? `${changed} ${changed === 1 ? "baralho atualizado" : "baralhos atualizados"}. Os personalizados foram mantidos.`
+            : "Configuração geral atualizada.";
+        } catch (error) {
+          console.error(error);
+          if (status) status.textContent = "Não foi possível aplicar a configuração geral.";
+        } finally {
+          select.disabled = false;
+          refreshGlobalModelSelect();
+        }
       }
     });
 
     document.addEventListener("submit", (event) => {
-      if (event.target?.id !== "reviewPresetNameForm") return;
-      event.preventDefault();
-      const input = $("#reviewPresetNameInput");
-      const status = $("#reviewPresetModalStatus");
-      const name = String(input?.value || "").trim();
-      if (!name) {
-        if (status) status.textContent = "Digite um nome para o padrão.";
-        input?.focus();
-        return;
-      }
-      closeNameModal(name);
+      if (event.target?.id === "reviewModelForm") saveModelFromModal(event);
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !$("#reviewPresetModal")?.classList.contains("hidden")) {
+      if (event.key !== "Escape") return;
+      if (!$("#reviewModelModal")?.classList.contains("hidden")) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        closeNameModal(null);
+        closeModelModal();
+        return;
+      }
+      if ($("#siteSettingsPanel")?.classList.contains("is-open")) {
+        event.preventDefault();
+        setSettingsPanel(false);
       }
     }, true);
   }
 
   function wrapStudyApi() {
     const api = window.OituStudy;
-    if (!api || typeof api.openConfig !== "function" || api.openConfig.__oitucardsReviewPresetWrapped) return;
+    if (!api || typeof api.openConfig !== "function" || api.openConfig.__oitucardsReviewModelsWrapped) return;
     const original = api.openConfig;
     const wrapped = async function (deckId, ...args) {
       currentDeckId = deckId || currentDeckId;
       const result = await original.call(this, deckId, ...args);
-      if (currentDeckId) await refreshStudyPresetSelection(currentDeckId);
+      if (currentDeckId) await refreshStudyModelSelection(currentDeckId);
       return result;
     };
-    Object.defineProperty(wrapped, "__oitucardsReviewPresetWrapped", { value: true });
+    Object.defineProperty(wrapped, "__oitucardsReviewModelsWrapped", { value: true });
     api.openConfig = wrapped;
   }
 
   function init() {
+    patchDatabase();
     ensureUI();
     bindEvents();
     wrapStudyApi();
+    setTimeout(() => {
+      ensureUI();
+      syncThemeControls();
+    }, 0);
   }
 
+  patchDatabase();
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
   else init();
 })();
