@@ -140,6 +140,16 @@
     document.body.appendChild(script);
   }
 
+  function loadStudyFlipToggle() {
+    if (document.querySelector('script[data-oitucards-study-flip-toggle]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/study-flip-toggle.js?v=20260825-1518";
+    script.dataset.oitucardsStudyFlipToggle = "true";
+    script.onerror = () => console.error("Não foi possível carregar a alternância do flashcard.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
@@ -147,6 +157,7 @@
   loadMobileCompat(loadVisualRefinement);
   loadAnimations();
   loadStudyAnnotations();
+  loadStudyFlipToggle();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
