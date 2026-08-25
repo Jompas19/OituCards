@@ -3,8 +3,8 @@
   window.__oitucardsStudyFlipToggle = true;
 
   const contexts = [
-    { view: "#studyView", card: "#studyCard", back: "#studyBackSection", ratings: "#studyRatingArea", edit: "#studyEditArea", hint: "#studyRevealHint" },
-    { view: "#multiStudyView", card: "#multiCard", back: "#multiBackSection", ratings: "#multiRatings", edit: "#multiEditArea", hint: "#multiHint" }
+    { view: "#studyView", card: "#studyCard", back: "#studyBackSection", ratings: "#studyRatingArea", edit: "#studyEditArea", hint: "#studyRevealHint", annotation: "study" },
+    { view: "#multiStudyView", card: "#multiCard", back: "#multiBackSection", ratings: "#multiRatings", edit: "#multiEditArea", hint: "#multiHint", annotation: "multi" }
   ];
 
   let collapsedContextKey = null;
@@ -30,6 +30,15 @@
     document.querySelector("#annotationViewer")?.classList.add("hidden");
   }
 
+  function restoreAnnotationActions(context) {
+    const bar = context?.annotation
+      ? document.querySelector(`[data-annotation-context="${context.annotation}"]`)
+      : null;
+    if (!bar?.dataset.cardId) return;
+    bar.classList.add("is-visible");
+    bar.setAttribute("aria-hidden", "false");
+  }
+
   function showFront(context) {
     if (!context) return;
     document.querySelector(context.back)?.classList.add("hidden");
@@ -52,6 +61,7 @@
     document.querySelector(context.ratings)?.classList.remove("hidden");
     document.querySelector(context.edit)?.classList.remove("hidden");
     document.querySelector(context.hint)?.classList.add("hidden");
+    restoreAnnotationActions(context);
     collapsedContextKey = null;
 
     const card = document.querySelector(context.card);
