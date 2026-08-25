@@ -144,7 +144,7 @@
     if (document.querySelector('script[data-oitucards-study-flip-toggle]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/study-flip-toggle.js?v=20260825-1518";
+    script.src = "js/study-flip-toggle.js?v=20260825-1606";
     script.dataset.oitucardsStudyFlipToggle = "true";
     script.onerror = () => console.error("Não foi possível carregar a alternância do flashcard.");
     document.body.appendChild(script);
@@ -154,7 +154,7 @@
     if (document.querySelector('script[data-oitucards-review-models]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/review-presets-bootstrap.js?v=20260825-1548";
+    script.src = "js/review-presets-bootstrap.js?v=20260825-1606";
     script.dataset.oitucardsReviewModels = "true";
     script.onerror = () => console.error("Não foi possível carregar os modelos de revisão.");
     document.body.appendChild(script);
