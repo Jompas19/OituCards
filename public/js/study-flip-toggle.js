@@ -3,12 +3,18 @@
   window.__oitucardsStudyFlipToggle = true;
 
   const contexts = [
-    { view: "#studyView", card: "#studyCard", back: "#studyBackSection", ratings: "#studyRatingArea", edit: "#studyEditArea", hint: "#studyRevealHint" },
-    { view: "#multiStudyView", card: "#multiCard", back: "#multiBackSection", ratings: "#multiRatings", edit: "#multiEditArea", hint: "#multiHint" }
+    { view: "#studyView", card: "#studyCard", back: "#studyBackSection", ratings: "#studyRatingArea", edit: "#studyEditArea", hint: "#studyRevealHint", annotation: "study" },
+    { view: "#multiStudyView", card: "#multiCard", back: "#multiBackSection", ratings: "#multiRatings", edit: "#multiEditArea", hint: "#multiHint", annotation: "multi" }
   ];
+
+  let collapsedContextKey = null;
 
   function activeContext() {
     return contexts.find((context) => document.querySelector(`${context.view}.active`)) || null;
+  }
+
+  function contextKey(context) {
+    return context?.card || null;
   }
 
   function isBackVisible(context) {
@@ -24,6 +30,15 @@
     document.querySelector("#annotationViewer")?.classList.add("hidden");
   }
 
+  function restoreAnnotationActions(context) {
+    const bar = context?.annotation
+      ? document.querySelector(`[data-annotation-context="${context.annotation}"]`)
+      : null;
+    if (!bar?.dataset.cardId) return;
+    bar.classList.add("is-visible");
+    bar.setAttribute("aria-hidden", "false");
+  }
+
   function showFront(context) {
     if (!context) return;
     document.querySelector(context.back)?.classList.add("hidden");
@@ -31,6 +46,7 @@
     document.querySelector(context.edit)?.classList.add("hidden");
     document.querySelector(context.hint)?.classList.remove("hidden");
     hideAnnotations();
+    collapsedContextKey = contextKey(context);
 
     const card = document.querySelector(context.card);
     if (card) {
@@ -39,29 +55,92 @@
     }
   }
 
-  document.addEventListener("click", (event) => {
-    const context = activeContext();
-    if (!context || !isBackVisible(context)) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target?.closest(context.card)) return;
+  function showBackAgain(context) {
+    if (!context) return;
+    document.querySelector(context.back)?.classList.remove("hidden");
+    document.querySelector(context.ratings)?.classList.remove("hidden");
+    document.querySelector(context.edit)?.classList.remove("hidden");
+    document.querySelector(context.hint)?.classList.add("hidden");
+    restoreAnnotationActions(context);
+    collapsedContextKey = null;
 
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    showFront(context);
+    const card = document.querySelector(context.card);
+    if (card) {
+      card.setAttribute("aria-label", "Flashcard com resposta revelada. Clique ou pressione espaço para voltar à frente.");
+      card.focus({ preventScroll: true });
+    }
+  }
+
+  function resetCollapsedState(target) {
+    if (!target) return;
+    if (target.closest("#studyPrevButton,#studyNextButton,#multiPrev,#multiNextArrow,#studyRatingArea,#multiRatings,#startStudyButton,#multiStart,#studyAgainButton,#multiAgain")) {
+      collapsedContextKey = null;
+    }
+  }
+
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    resetCollapsedState(target);
+
+    const context = activeContext();
+    if (!context || !target?.closest(context.card)) return;
+
+    if (isBackVisible(context)) {
+      event.preventDefault();
+      showFront(context);
+      return;
+    }
+
+    if (collapsedContextKey === contextKey(context)) {
+      event.preventDefault();
+      showBackAgain(context);
+      return;
+    }
+
+    // Primeira abertura: deixamos o núcleo do estudo revelar o verso e atualizar seu estado interno.
+    setTimeout(() => {
+      if (isBackVisible(context)) collapsedContextKey = null;
+    }, 0);
   }, true);
 
   document.addEventListener("keydown", (event) => {
-    if (event.code !== "Space") return;
     const context = activeContext();
-    if (!context || !isBackVisible(context)) return;
+    if (!context) return;
 
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      collapsedContextKey = null;
+      return;
+    }
+
+    const collapsed = collapsedContextKey === contextKey(context) && !isBackVisible(context);
+    if (collapsed && ["0", "1", "2", "3", "4"].includes(event.key)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+
+    if (event.code !== "Space") return;
     const active = document.activeElement;
     const tag = active?.tagName;
     if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || active?.isContentEditable) return;
-    if (!document.querySelector(context.card)) return;
 
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    showFront(context);
+    if (isBackVisible(context)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showFront(context);
+      return;
+    }
+
+    if (collapsed) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showBackAgain(context);
+      return;
+    }
+
+    // Na primeira abertura, o listener original do estudo cuida da mudança de estado.
+    setTimeout(() => {
+      if (isBackVisible(context)) collapsedContextKey = null;
+    }, 0);
   }, true);
 })();
