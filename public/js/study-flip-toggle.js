@@ -87,14 +87,12 @@
 
     if (isBackVisible(context)) {
       event.preventDefault();
-      event.stopImmediatePropagation();
       showFront(context);
       return;
     }
 
     if (collapsedContextKey === contextKey(context)) {
       event.preventDefault();
-      event.stopImmediatePropagation();
       showBackAgain(context);
       return;
     }
@@ -114,6 +112,13 @@
       return;
     }
 
+    const collapsed = collapsedContextKey === contextKey(context) && !isBackVisible(context);
+    if (collapsed && ["0", "1", "2", "3", "4"].includes(event.key)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+
     if (event.code !== "Space") return;
     const active = document.activeElement;
     const tag = active?.tagName;
@@ -126,7 +131,7 @@
       return;
     }
 
-    if (collapsedContextKey === contextKey(context)) {
+    if (collapsed) {
       event.preventDefault();
       event.stopImmediatePropagation();
       showBackAgain(context);
