@@ -33,6 +33,18 @@
     }
   }
 
+  function wrapStudyApi() {
+    const api = window.OituStudy;
+    if (!api || typeof api.openConfig !== "function" || api.openConfig.__oitucardsPresetBootstrapWrapped) return;
+    const original = api.openConfig;
+    const wrapped = function (deckId, ...args) {
+      if (deckId) currentDeckId = deckId;
+      return original.call(this, deckId, ...args);
+    };
+    Object.defineProperty(wrapped, "__oitucardsPresetBootstrapWrapped", { value: true });
+    api.openConfig = wrapped;
+  }
+
   document.addEventListener("click", (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
@@ -65,6 +77,8 @@
       reentry = false;
     }
   }, true);
+
+  wrapStudyApi();
 
   const script = document.createElement("script");
   script.async = false;
