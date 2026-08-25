@@ -150,6 +150,16 @@
     document.body.appendChild(script);
   }
 
+  function loadReviewPresets() {
+    if (document.querySelector('script[data-oitucards-review-presets]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/review-presets.js?v=20260825-1526";
+    script.dataset.oitucardsReviewPresets = "true";
+    script.onerror = () => console.error("Não foi possível carregar os padrões de revisão.");
+    document.body.appendChild(script);
+  }
+
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
@@ -158,6 +168,7 @@
   loadAnimations();
   loadStudyAnnotations();
   loadStudyFlipToggle();
+  loadReviewPresets();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
