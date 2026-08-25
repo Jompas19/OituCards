@@ -6,6 +6,7 @@
   const GLOBAL_MODEL_KEY = "OituCardsGlobalReviewModelV1";
   let decorating = false;
   let globalSelectObserver = null;
+  let reviewSelectObserver = null;
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -70,13 +71,22 @@
     decorateReviewSettingsSelect();
   }
 
-  function watchGlobalSelect() {
-    const select = $("#globalReviewModelSelect");
-    if (!select || select.dataset.refinementObserved === "true") return;
-    select.dataset.refinementObserved = "true";
-    globalSelectObserver?.disconnect();
-    globalSelectObserver = new MutationObserver(() => decorateGlobalSelect());
-    globalSelectObserver.observe(select, { childList: true });
+  function watchSelectors() {
+    const globalSelect = $("#globalReviewModelSelect");
+    if (globalSelect && globalSelect.dataset.refinementObserved !== "true") {
+      globalSelect.dataset.refinementObserved = "true";
+      globalSelectObserver?.disconnect();
+      globalSelectObserver = new MutationObserver(() => decorateGlobalSelect());
+      globalSelectObserver.observe(globalSelect, { childList: true });
+    }
+
+    const reviewSelect = $("#reviewSettingsModelSelect");
+    if (reviewSelect && reviewSelect.dataset.refinementObserved !== "true") {
+      reviewSelect.dataset.refinementObserved = "true";
+      reviewSelectObserver?.disconnect();
+      reviewSelectObserver = new MutationObserver(() => decorateReviewSettingsSelect());
+      reviewSelectObserver.observe(reviewSelect, { childList: true });
+    }
   }
 
   document.addEventListener("change", (event) => {
@@ -101,17 +111,17 @@
     if (target.closest("#themeToggle,#reviewSettingsButton,#saveReviewModelButton,#loadReviewModelButton")) {
       setTimeout(() => {
         decorateAll();
-        watchGlobalSelect();
+        watchSelectors();
       }, 0);
     }
   });
 
   function init() {
     decorateAll();
-    watchGlobalSelect();
+    watchSelectors();
     setTimeout(() => {
       decorateAll();
-      watchGlobalSelect();
+      watchSelectors();
     }, 0);
   }
 
