@@ -1,7 +1,88 @@
 (function () {
   const DB_NAME = "OituCardsDB";
   const DB_VERSION = 1;
+  const REVIEW_MODEL_STORAGE_KEY = "OituCardsReviewPresetsV1";
+  const GLOBAL_REVIEW_MODEL_KEY = "OituCardsGlobalReviewModelV1";
+  const SYSTEM_REVIEW_SETTINGS = Object.freeze({
+    newIntervals: Object.freeze({ hard: 1, medium: 2, good: 4, easy: 7 }),
+    multipliers: Object.freeze({ hard: 1.2, medium: 1.8, good: 2.5, easy: 4 }),
+    maxIntervalDays: 180
+  });
+  const REVIEW_RATINGS = ["hard", "medium", "good", "easy"];
   let dbPromise = null;
+
+  function normalizeReviewSettings(raw) {
+    const source = raw || {};
+    const intervals = source.newIntervals || source || {};
+    const multipliers = source.multipliers || {};
+    const parsedMax = Number.parseInt(source.maxIntervalDays, 10);
+    const maxIntervalDays = Number.isInteger(parsedMax) && parsedMax >= 1 && parsedMax <= 3650
+      ? parsedMax
+      : SYSTEM_REVIEW_SETTINGS.maxIntervalDays;
+    const newIntervals = {};
+    const normalizedMultipliers = {};
+
+    REVIEW_RATINGS.forEach((rating) => {
+      const interval = Number.parseInt(intervals[rating], 10);
+      newIntervals[rating] = Number.isInteger(interval) && interval >= 1
+        ? Math.min(maxIntervalDays, interval)
+        : SYSTEM_REVIEW_SETTINGS.newIntervals[rating];
+
+      const multiplier = Number.parseFloat(multipliers[rating]);
+      normalizedMultipliers[rating] = Number.isFinite(multiplier) && multiplier >= 1
+        ? Math.min(10, Math.round(multiplier * 100) / 100)
+        : SYSTEM_REVIEW_SETTINGS.multipliers[rating];
+    });
+
+    return { newIntervals, multipliers: normalizedMultipliers, maxIntervalDays };
+  }
+
+  function cloneReviewSettings(settings) {
+    const normalized = normalizeReviewSettings(settings);
+    return {
+      newIntervals: { ...normalized.newIntervals },
+      multipliers: { ...normalized.multipliers },
+      maxIntervalDays: normalized.maxIntervalDays
+    };
+  }
+
+  function readReviewModels() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(REVIEW_MODEL_STORAGE_KEY) || "[]");
+      return Array.isArray(parsed)
+        ? parsed.filter((item) => item?.id && item?.settings)
+        : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function globalReviewDefaults() {
+    let value = "system";
+    try {
+      const stored = String(localStorage.getItem(GLOBAL_REVIEW_MODEL_KEY) || "system");
+      if (stored === "system") {
+        value = "system";
+      } else if (stored.startsWith("model:") && readReviewModels().some((model) => `model:${model.id}` === stored)) {
+        value = stored;
+      }
+    } catch (_) {
+      value = "system";
+    }
+
+    let settings = cloneReviewSettings(SYSTEM_REVIEW_SETTINGS);
+    if (value.startsWith("model:")) {
+      const id = value.slice(6);
+      const model = readReviewModels().find((item) => item.id === id);
+      if (model) settings = cloneReviewSettings(model.settings);
+    }
+
+    return {
+      reviewSettings: settings,
+      reviewModelMode: "global",
+      reviewModelId: value
+    };
+  }
 
   function openDB() {
     if (dbPromise) return dbPromise;
@@ -46,6 +127,7 @@
       kind: "deck",
       name: name.trim(),
       folderId: options.folderId || null,
+      ...globalReviewDefaults(),
       createdAt: now,
       updatedAt: now
     };
@@ -126,6 +208,7 @@
       kind: "folder",
       name: name.trim(),
       parentId: parentId || null,
+      ...globalReviewDefaults(),
       createdAt: now,
       updatedAt: now
     };
