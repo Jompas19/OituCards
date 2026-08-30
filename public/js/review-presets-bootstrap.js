@@ -2,12 +2,26 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadDefaultFollow() {
+    if (document.querySelector('script[data-oitucards-review-model-default-follow]')) return;
+    const defaults = document.createElement("script");
+    defaults.async = false;
+    defaults.src = "js/review-model-default-follow.js?v=20260830-2045";
+    defaults.dataset.oitucardsReviewModelDefaultFollow = "true";
+    defaults.onerror = () => console.error("Não foi possível carregar a regra padrão dos modelos de revisão.");
+    document.body.appendChild(defaults);
+  }
+
   function loadSelectionState() {
-    if (document.querySelector('script[data-oitucards-review-model-selection-state]')) return;
+    if (document.querySelector('script[data-oitucards-review-model-selection-state]')) {
+      loadDefaultFollow();
+      return;
+    }
     const selection = document.createElement("script");
     selection.async = false;
     selection.src = "js/review-model-selection-state.js?v=20260830-1535";
     selection.dataset.oitucardsReviewModelSelectionState = "true";
+    selection.addEventListener("load", loadDefaultFollow, { once: true });
     selection.onerror = () => console.error("Não foi possível carregar o estado dos modelos de revisão.");
     document.body.appendChild(selection);
   }
