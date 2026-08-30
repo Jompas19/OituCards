@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-review-model-ui-refinement]')) return;
     const refinement = document.createElement("script");
     refinement.async = false;
-    refinement.src = "js/review-model-ui-refinement.js?v=20260825-1606";
+    refinement.src = "js/review-model-ui-refinement.js?v=20260830-1530";
     refinement.dataset.oitucardsReviewModelUiRefinement = "true";
     refinement.onerror = () => console.error("Não foi possível carregar o refinamento dos modelos de revisão.");
     document.body.appendChild(refinement);
