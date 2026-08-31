@@ -1,4 +1,41 @@
 (function () {
+  function limitDeckPathComponent(value) {
+    const text = String(value || "").trim();
+    const duplicateSuffix = text.match(/ \(\d+\)$/);
+    if (!duplicateSuffix) return String.prototype.__oitucardsOriginalSlice.call(text, 0, 120);
+
+    const suffix = duplicateSuffix[0];
+    const base = String.prototype.__oitucardsOriginalSlice.call(text, 0, -suffix.length);
+    const available = Math.max(1, 120 - suffix.length);
+    return `${String.prototype.__oitucardsOriginalSlice.call(base, 0, available)}${suffix}`;
+  }
+
+  function patchHierarchicalDeckNameLimit() {
+    if (String.prototype.__oitucardsOriginalSlice) return;
+
+    const originalSlice = String.prototype.slice;
+    Object.defineProperty(String.prototype, "__oitucardsOriginalSlice", {
+      configurable: true,
+      enumerable: false,
+      writable: false,
+      value: originalSlice
+    });
+
+    String.prototype.slice = function (start, end) {
+      const value = String(this);
+      if (start === 0 && end === 120 && value.includes("::")) {
+        const stack = String(new Error().stack || "");
+        if (stack.includes("getUniqueDeckName") || /import(?:\.min)?\.js/i.test(stack)) {
+          return value
+            .split("::")
+            .map((part) => limitDeckPathComponent(part))
+            .join("::");
+        }
+      }
+      return originalSlice.apply(this, arguments);
+    };
+  }
+
   function patchJsZip(JSZip) {
     if (!JSZip || JSZip.__oitucardsModernAnkiPatched) return JSZip;
 
@@ -21,6 +58,8 @@
     JSZip.__oitucardsModernAnkiPatched = true;
     return JSZip;
   }
+
+  patchHierarchicalDeckNameLimit();
 
   if (window.JSZip) {
     window.JSZip = patchJsZip(window.JSZip);
