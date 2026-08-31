@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-import-library-final-refresh]')) return;
     const refresh = document.createElement("script");
     refresh.async = false;
-    refresh.src = "js/import-library-final-refresh.js?v=20260830-2249";
+    refresh.src = "js/import-library-final-refresh.js?v=20260830-2255";
     refresh.dataset.oitucardsImportLibraryFinalRefresh = "true";
     refresh.onerror = () => console.error("Não foi possível carregar a atualização final da biblioteca após importação.");
     document.body.appendChild(refresh);
