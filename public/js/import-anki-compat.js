@@ -1,4 +1,16 @@
 (function () {
+  const importState = {
+    active: false,
+    deckSnapshotPromise: null,
+    sanitizeCache: new Map(),
+    statusObserver: null
+  };
+
+  const BIDI_CONTROL_RE = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+  const naturalCollator = typeof Intl?.Collator === "function"
+    ? new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" })
+    : null;
+
   function limitDeckPathComponent(value) {
     const text = String(value || "").trim();
     const duplicateSuffix = text.match(/ \(\d+\)$/);
@@ -36,6 +48,129 @@
     };
   }
 
+  function patchNaturalLibraryOrdering() {
+    if (!naturalCollator || String.prototype.__oitucardsOriginalLocaleCompare) return;
+
+    const originalLocaleCompare = String.prototype.localeCompare;
+    Object.defineProperty(String.prototype, "__oitucardsOriginalLocaleCompare", {
+      configurable: true,
+      enumerable: false,
+      writable: false,
+      value: originalLocaleCompare
+    });
+
+    String.prototype.localeCompare = function (compareString, locales, options) {
+      const left = String(this);
+      const right = String(compareString ?? "");
+      const isPtBr = locales === "pt-BR" || (Array.isArray(locales) && locales.includes("pt-BR"));
+      const needsNaturalOrder = /\d/.test(left) || /\d/.test(right) || BIDI_CONTROL_RE.test(left) || BIDI_CONTROL_RE.test(right);
+      BIDI_CONTROL_RE.lastIndex = 0;
+
+      if (isPtBr && needsNaturalOrder) {
+        const stack = String(new Error().stack || "");
+        if (stack.includes("folderChildrenMap") || stack.includes("decksByFolderMap")) {
+          return naturalCollator.compare(
+            left.replace(BIDI_CONTROL_RE, ""),
+            right.replace(BIDI_CONTROL_RE, "")
+          );
+        }
+      }
+      return originalLocaleCompare.apply(this, arguments);
+    };
+  }
+
+  function trimSanitizeCache() {
+    while (importState.sanitizeCache.size > 800) {
+      const first = importState.sanitizeCache.keys().next().value;
+      importState.sanitizeCache.delete(first);
+    }
+  }
+
+  function patchFastImportSanitizer() {
+    if (!window.OituEditor?.sanitizeHtml || OituEditor.sanitizeHtml.__oitucardsImportFastPath) return;
+
+    const originalSanitizeHtml = OituEditor.sanitizeHtml.bind(OituEditor);
+    const patched = function (html) {
+      if (!importState.active) return originalSanitizeHtml(html);
+
+      const source = String(html ?? "").trim();
+      if (!source) return "";
+
+      // Texto sem tags nem entidades HTML é seguro para reutilização direta e
+      // evita milhares de passagens desnecessárias pelo parser DOM em APKGs grandes.
+      if (!/[<>&]/.test(source)) return source;
+
+      if (source.length <= 50000 && importState.sanitizeCache.has(source)) {
+        return importState.sanitizeCache.get(source);
+      }
+
+      const sanitized = originalSanitizeHtml(source);
+      if (source.length <= 50000) {
+        importState.sanitizeCache.set(source, sanitized);
+        trimSanitizeCache();
+      }
+      return sanitized;
+    };
+    patched.__oitucardsImportFastPath = true;
+    OituEditor.sanitizeHtml = patched;
+  }
+
+  function patchImportDeckSnapshot() {
+    if (!window.OituDB?.getDecks || OituDB.getDecks.__oitucardsImportSnapshot) return;
+
+    const originalGetDecks = OituDB.getDecks.bind(OituDB);
+    const patched = async function (...args) {
+      if (!importState.active) return originalGetDecks(...args);
+
+      if (!importState.deckSnapshotPromise) {
+        importState.deckSnapshotPromise = Promise.resolve(originalGetDecks(...args)).then((decks) =>
+          (decks || []).map((deck) => ({ ...deck }))
+        );
+      }
+      const decks = await importState.deckSnapshotPromise;
+      return decks.map((deck) => ({ ...deck }));
+    };
+    patched.__oitucardsImportSnapshot = true;
+    OituDB.getDecks = patched;
+  }
+
+  function finishImportSession() {
+    importState.active = false;
+    importState.deckSnapshotPromise = null;
+    importState.sanitizeCache.clear();
+  }
+
+  function inspectImportStatus() {
+    const status = document.querySelector("#importStatus");
+    if (!status || !importState.active) return;
+    const text = String(status.textContent || "").trim();
+    const tone = String(status.dataset.tone || "");
+    if (/\bcard(s)? importado(s)?\b/i.test(text) || tone === "error") finishImportSession();
+  }
+
+  function attachImportStatusObserver() {
+    const status = document.querySelector("#importStatus");
+    if (!status || importState.statusObserver) return;
+    importState.statusObserver = new MutationObserver(inspectImportStatus);
+    importState.statusObserver.observe(status, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["data-tone"] });
+  }
+
+  function beginImportSession() {
+    importState.active = true;
+    importState.deckSnapshotPromise = null;
+    importState.sanitizeCache.clear();
+    patchImportDeckSnapshot();
+    patchFastImportSanitizer();
+    attachImportStatusObserver();
+  }
+
+  function installImportSessionHooks() {
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest("#confirmImportButton")) return;
+      beginImportSession();
+    }, true);
+  }
+
   function patchJsZip(JSZip) {
     if (!JSZip || JSZip.__oitucardsModernAnkiPatched) return JSZip;
 
@@ -60,6 +195,10 @@
   }
 
   patchHierarchicalDeckNameLimit();
+  patchNaturalLibraryOrdering();
+  patchFastImportSanitizer();
+  patchImportDeckSnapshot();
+  installImportSessionHooks();
 
   if (window.JSZip) {
     window.JSZip = patchJsZip(window.JSZip);
