@@ -6,7 +6,8 @@
     editingDeckId: null,
     editingFolderId: null,
     pendingDelete: null,
-    listObserver: null
+    listObserver: null,
+    openMenuFolderId: null
   };
 
   const $ = (selector, root = document) => root.querySelector(selector);
@@ -31,6 +32,81 @@
         background:color-mix(in srgb,var(--danger) 8%,var(--surface));
         border:1px solid color-mix(in srgb,var(--danger) 22%,var(--line));
         color:var(--text);
+      }
+      #deckList .folder-row .folder-row-actions,
+      #deckList .folder-row .deck-actions{
+        position:relative;
+        overflow:visible;
+      }
+      #deckList .folder-row .folder-row-actions > [data-add-existing-folder],
+      #deckList .folder-row .folder-row-actions > [data-create-subfolder],
+      #deckList .folder-row .folder-row-actions > [data-edit-folder],
+      #deckList .folder-row .folder-row-actions > [data-delete-folder-direct],
+      #deckList .folder-row .deck-actions > [data-add-existing-folder],
+      #deckList .folder-row .deck-actions > [data-create-subfolder],
+      #deckList .folder-row .deck-actions > [data-edit-folder],
+      #deckList .folder-row .deck-actions > [data-delete-folder-direct]{
+        display:none!important;
+      }
+      .folder-more-wrap{
+        position:relative;
+        display:inline-flex;
+      }
+      .folder-more-button{
+        font-size:1.2rem;
+        font-weight:850;
+        letter-spacing:.04em;
+      }
+      .folder-more-menu{
+        position:absolute;
+        top:calc(100% + 8px);
+        right:0;
+        z-index:90;
+        width:max-content;
+        min-width:225px;
+        padding:7px;
+        border:1px solid var(--line);
+        border-radius:14px;
+        background:var(--surface);
+        box-shadow:var(--shadow);
+      }
+      .folder-more-menu.hidden{display:none!important}
+      .folder-more-menu-item{
+        width:100%;
+        min-height:40px;
+        display:flex;
+        align-items:center;
+        gap:10px;
+        padding:8px 10px;
+        border:0;
+        border-radius:9px;
+        background:transparent;
+        color:var(--text);
+        text-align:left;
+        cursor:pointer;
+        font-weight:700;
+      }
+      .folder-more-menu-item:hover,
+      .folder-more-menu-item:focus-visible{
+        background:var(--surface-2);
+        outline:none;
+      }
+      .folder-more-menu-item .folder-menu-icon{
+        width:22px;
+        flex:0 0 22px;
+        text-align:center;
+        color:var(--muted);
+      }
+      .folder-more-menu-item.is-danger{
+        margin-top:5px;
+        padding-top:10px;
+        border-top:1px solid var(--line);
+        border-radius:0 0 9px 9px;
+        color:var(--danger);
+      }
+      .folder-more-menu-item.is-danger .folder-menu-icon{color:var(--danger)}
+      @media (max-width:700px){
+        .folder-more-menu{min-width:210px}
       }
     `;
     document.head.appendChild(style);
@@ -102,30 +178,75 @@
     actions.prepend(button);
   }
 
-  function decorateFolderDeleteButtons() {
+  function folderMoreMarkup(folderId) {
+    return `
+      <span class="folder-more-wrap">
+        <button class="action-button icon-only folder-more-button" type="button" data-folder-more="${folderId}" title="Mais opções" aria-label="Mais opções da pasta" aria-expanded="false">⋯</button>
+        <span class="folder-more-menu hidden" data-folder-more-menu="${folderId}" role="menu" aria-label="Mais opções da pasta">
+          <button class="folder-more-menu-item" type="button" data-folder-menu-action="edit" data-folder-menu-id="${folderId}" role="menuitem"><span class="folder-menu-icon">✎</span><span>Editar pasta</span></button>
+          <button class="folder-more-menu-item" type="button" data-folder-menu-action="existing" data-folder-menu-id="${folderId}" role="menuitem"><span class="folder-menu-icon">↪</span><span>Adicionar itens existentes</span></button>
+          <button class="folder-more-menu-item" type="button" data-folder-menu-action="subfolder" data-folder-menu-id="${folderId}" role="menuitem"><span class="folder-menu-icon">＋</span><span>Criar subpasta</span></button>
+          <button class="folder-more-menu-item is-danger" type="button" data-folder-menu-action="delete" data-folder-menu-id="${folderId}" role="menuitem"><span class="folder-menu-icon">🗑</span><span>Excluir pasta</span></button>
+        </span>
+      </span>`;
+  }
+
+  function closeFolderMenus(exceptId = null) {
+    $$("[data-folder-more-menu]").forEach((menu) => {
+      const id = menu.dataset.folderMoreMenu || null;
+      if (exceptId && id === exceptId) return;
+      menu.classList.add("hidden");
+      const button = $(`[data-folder-more="${CSS.escape(id || "")}"]`);
+      button?.setAttribute("aria-expanded", "false");
+    });
+    if (!exceptId) state.openMenuFolderId = null;
+  }
+
+  function toggleFolderMenu(folderId) {
+    const menu = $(`[data-folder-more-menu="${CSS.escape(folderId)}"]`);
+    const button = $(`[data-folder-more="${CSS.escape(folderId)}"]`);
+    if (!menu || !button) return;
+    const willOpen = menu.classList.contains("hidden");
+    closeFolderMenus(willOpen ? folderId : null);
+    menu.classList.toggle("hidden", !willOpen);
+    button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    state.openMenuFolderId = willOpen ? folderId : null;
+  }
+
+  function decorateFolderActions() {
     const list = $("#deckList");
     if (!list) return;
     $$("[data-folder-id]", list).forEach((row) => {
       const folderId = row.dataset.folderId;
       const actions = $(".folder-row-actions,.deck-actions", row);
-      if (!folderId || !actions || $("[data-delete-folder-direct]", actions)) return;
-      const button = document.createElement("button");
-      button.className = "action-button icon-only delete";
-      button.type = "button";
-      button.dataset.deleteFolderDirect = folderId;
-      button.title = "Apagar pasta";
-      button.setAttribute("aria-label", "Apagar pasta");
-      button.textContent = "🗑";
-      actions.appendChild(button);
+      if (!folderId || !actions) return;
+
+      if (!$("[data-delete-folder-direct]", actions)) {
+        const deleteButton = document.createElement("button");
+        deleteButton.className = "action-button icon-only delete";
+        deleteButton.type = "button";
+        deleteButton.dataset.deleteFolderDirect = folderId;
+        deleteButton.title = "Apagar pasta";
+        deleteButton.setAttribute("aria-label", "Apagar pasta");
+        deleteButton.textContent = "🗑";
+        actions.appendChild(deleteButton);
+      }
+
+      if (!$("[data-folder-more]", actions)) {
+        actions.insertAdjacentHTML("beforeend", folderMoreMarkup(folderId));
+      }
     });
   }
 
   function installListObserver() {
     const list = $("#deckList");
     if (!list || state.listObserver) return;
-    state.listObserver = new MutationObserver(decorateFolderDeleteButtons);
+    state.listObserver = new MutationObserver(() => {
+      closeFolderMenus();
+      decorateFolderActions();
+    });
     state.listObserver.observe(list, { childList: true, subtree: false });
-    decorateFolderDeleteButtons();
+    decorateFolderActions();
   }
 
   function descendantFolderIds(rootId, folders) {
@@ -266,12 +387,45 @@
     if (deckEdit && deckRow) state.editingDeckId = deckRow.dataset.deckId || null;
   }
 
+  function triggerFolderMenuAction(folderId, action) {
+    const row = $(`[data-folder-id="${CSS.escape(folderId)}"]`);
+    if (!row) return;
+    const selector = action === "edit"
+      ? `[data-edit-folder="${CSS.escape(folderId)}"]`
+      : action === "existing"
+        ? `[data-add-existing-folder="${CSS.escape(folderId)}"]`
+        : action === "subfolder"
+          ? `[data-create-subfolder="${CSS.escape(folderId)}"]`
+          : action === "delete"
+            ? `[data-delete-folder-direct="${CSS.escape(folderId)}"]`
+            : null;
+    if (!selector) return;
+    closeFolderMenus();
+    row.querySelector(selector)?.click();
+  }
+
   function bindEvents() {
     window.addEventListener("click", captureEditingTargets, true);
 
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target : null;
       if (!target) return;
+
+      const more = target.closest("[data-folder-more]");
+      if (more) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleFolderMenu(more.dataset.folderMore);
+        return;
+      }
+
+      const menuAction = target.closest("[data-folder-menu-action][data-folder-menu-id]");
+      if (menuAction) {
+        event.preventDefault();
+        event.stopPropagation();
+        triggerFolderMenuAction(menuAction.dataset.folderMenuId, menuAction.dataset.folderMenuAction);
+        return;
+      }
 
       const rowDelete = target.closest("[data-delete-folder-direct]");
       if (rowDelete) {
@@ -302,7 +456,14 @@
       if (target.closest("#directDeleteConfirmCancel,#directDeleteConfirmClose")) {
         event.preventDefault();
         cancelPendingDelete();
+        return;
       }
+
+      if (!target.closest(".folder-more-wrap")) closeFolderMenus();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.openMenuFolderId) closeFolderMenus();
     });
 
     $("#directDeleteConfirmModal")?.addEventListener("mousedown", (event) => {
@@ -314,7 +475,7 @@
     ensureDeckDeleteButton();
     ensureFolderEditDeleteButton();
     installListObserver();
-    decorateFolderDeleteButtons();
+    decorateFolderActions();
     if ((!$("#folderEditModal") || !$("#deckList")) && attempt < 20) {
       setTimeout(() => installUi(attempt + 1), 80);
     }
