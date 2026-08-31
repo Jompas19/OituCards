@@ -57,12 +57,13 @@
   function decorateReviewReuse() {
     const block = $("#reviewModelReuseBlock");
     if (!block) return;
+    const desiredText = "Selecione um modelo e as regras serão carregadas automaticamente.";
     const copy = block.querySelector("p");
-    if (copy) copy.textContent = "Selecione um modelo e as regras serão carregadas automaticamente.";
+    if (copy && copy.textContent !== desiredText) copy.textContent = desiredText;
     const button = $("#loadReviewModelButton");
     if (button) {
-      button.tabIndex = -1;
-      button.setAttribute("aria-hidden", "true");
+      if (button.tabIndex !== -1) button.tabIndex = -1;
+      if (button.getAttribute("aria-hidden") !== "true") button.setAttribute("aria-hidden", "true");
     }
   }
 
@@ -126,9 +127,7 @@
       return;
     }
 
-    if (![...select.options].some((option) => option.value === value)) {
-      select.add(new Option(model.name, value));
-    }
+    if (![...select.options].some((option) => option.value === value)) select.add(new Option(model.name, value));
     select.value = value;
     keepSettingsPanelOpen();
     select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -156,6 +155,7 @@
 
     if (target.closest("#createReviewModelFromSettings")) modelCreationSource = "global";
     else if (target.closest("#saveReviewModelButton")) modelCreationSource = "review";
+    else if (target.closest("#reviewModelModalClose,#reviewModelModalCancel") || target.id === "reviewModelModal") modelCreationSource = null;
 
     if (target.closest("#folderReviewSettingsButton")) maskFolderModelSync();
 
@@ -173,6 +173,10 @@
   }
 
   function bindUnsavedModal() {
+    const modal = $("#reviewUnsavedModal");
+    if (!modal || modal.dataset.reviewUnsavedBound === "true") return;
+    modal.dataset.reviewUnsavedBound = "true";
+
     $("#reviewUnsavedContinue")?.addEventListener("click", () => {
       pendingExitButton = null;
       closeUnsavedModal();
@@ -195,8 +199,11 @@
       $("#reviewSettingsForm")?.requestSubmit();
     });
 
-    $("#reviewUnsavedModal")?.addEventListener("mousedown", (event) => {
-      if (event.target === $("#reviewUnsavedModal")) closeUnsavedModal();
+    modal.addEventListener("mousedown", (event) => {
+      if (event.target === modal) {
+        pendingExitButton = null;
+        closeUnsavedModal();
+      }
     });
   }
 
@@ -254,10 +261,8 @@
     const observer = new MutationObserver(() => {
       decorateReviewReuse();
       watchReviewView();
-      if (!$("#reviewUnsavedModal")) {
-        ensureUnsavedModal();
-        bindUnsavedModal();
-      }
+      if (!$("#reviewUnsavedModal")) ensureUnsavedModal();
+      bindUnsavedModal();
     });
     observer.observe(document.body, { childList: true, subtree: true });
   }
