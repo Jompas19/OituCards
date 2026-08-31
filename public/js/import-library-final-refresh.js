@@ -2,13 +2,13 @@
   if (window.__oitucardsImportLibraryFinalRefresh) return;
   window.__oitucardsImportLibraryFinalRefresh = true;
 
+  const CACHE_BYPASS_MS = 35000;
   const state = {
     statusObserver: null,
-    listObserver: null,
-    lastSuccessText: "",
-    pendingAfterRender: false,
-    fallbackTimer: null,
-    refreshGeneration: 0
+    successHandled: false,
+    bypassUntil: 0,
+    originalGetCardsByDeck: null,
+    readPatched: false
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -17,49 +17,70 @@
     return /\bcard(s)? importado(s)?\b/i.test(String(text || ""));
   }
 
-  async function renderLibraryOnce() {
-    try {
-      await window.OituLibrary?.render?.();
-    } catch (error) {
-      console.warn("OituCards: atualização final da biblioteca após importação falhou.", error);
-    }
+  async function readCardsDirectly(deckId) {
+    const db = await OituDB.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("cards", "readonly");
+      const req = tx.objectStore("cards").index("deckId").getAll(IDBKeyRange.only(deckId));
+      req.onsuccess = () => {
+        const cards = req.result || [];
+        cards.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+        resolve(cards);
+      };
+      req.onerror = () => reject(req.error);
+      tx.onerror = () => reject(tx.error);
+    });
   }
 
-  function finishPendingRefresh(generation) {
-    if (generation !== state.refreshGeneration || !state.pendingAfterRender) return;
-    state.pendingAfterRender = false;
-    clearTimeout(state.fallbackTimer);
-    state.fallbackTimer = null;
+  function patchCardReads() {
+    if (state.readPatched || !window.OituDB?.getCardsByDeck || !window.OituDB?.openDB) return;
+    state.readPatched = true;
+    state.originalGetCardsByDeck = OituDB.getCardsByDeck.bind(OituDB);
 
-    // A MutationObserver roda depois da tarefa que redesenhou a lista. Nesse ponto,
-    // o render antigo da biblioteca já terminou e uma nova renderização não será descartada.
-    setTimeout(() => renderLibraryOnce(), 0);
+    OituDB.getCardsByDeck = async (deckId) => {
+      if (Date.now() < state.bypassUntil) {
+        try {
+          return await readCardsDirectly(deckId);
+        } catch (error) {
+          console.warn("OituCards: leitura direta pós-importação falhou; usando cache normal.", error);
+        }
+      }
+      return state.originalGetCardsByDeck(deckId);
+    };
   }
 
-  function requestAuthoritativeRefresh() {
-    const generation = ++state.refreshGeneration;
-    state.pendingAfterRender = true;
+  function renderFreshLibrary() {
+    // As leituras feitas durante esta janela ignoram o cache antigo de 30 s.
+    // Duas tentativas curtas cobrem eventual render que já estava em andamento,
+    // mas não ficam observando/re-renderizando a página continuamente.
+    [0, 350].forEach((delay) => {
+      setTimeout(() => {
+        Promise.resolve(window.OituLibrary?.render?.()).catch((error) => {
+          console.warn("OituCards: atualização da biblioteca após importação falhou.", error);
+        });
+      }, delay);
+    });
+  }
 
-    // Primeira tentativa: funciona imediatamente quando não há render concorrente.
-    renderLibraryOnce();
-
-    // Se havia um render antigo em andamento, a próxima troca da lista será o sinal
-    // de que ele terminou. O observer abaixo dispara então a renderização definitiva.
-    clearTimeout(state.fallbackTimer);
-    state.fallbackTimer = setTimeout(() => {
-      if (generation !== state.refreshGeneration || !state.pendingAfterRender) return;
-      state.pendingAfterRender = false;
-      renderLibraryOnce();
-    }, 1200);
+  function activateFreshReadWindow() {
+    patchCardReads();
+    state.bypassUntil = Date.now() + CACHE_BYPASS_MS;
+    renderFreshLibrary();
   }
 
   function inspectStatus() {
     const status = $("#importStatus");
     if (!status) return;
     const text = String(status.textContent || "").trim();
-    if (!isImportSuccess(text) || text === state.lastSuccessText) return;
-    state.lastSuccessText = text;
-    requestAuthoritativeRefresh();
+
+    if (!isImportSuccess(text)) {
+      state.successHandled = false;
+      return;
+    }
+
+    if (state.successHandled) return;
+    state.successHandled = true;
+    activateFreshReadWindow();
   }
 
   function attachStatusObserver() {
@@ -70,23 +91,14 @@
     inspectStatus();
   }
 
-  function attachListObserver() {
-    const list = $("#deckList");
-    if (!list || state.listObserver) return;
-    state.listObserver = new MutationObserver(() => {
-      if (!state.pendingAfterRender) return;
-      finishPendingRefresh(state.refreshGeneration);
-    });
-    state.listObserver.observe(list, { childList: true, subtree: false });
-  }
-
   function init() {
+    patchCardReads();
     attachStatusObserver();
-    attachListObserver();
     $("#importDeckButton")?.addEventListener("click", () => {
+      state.successHandled = false;
       setTimeout(() => {
+        patchCardReads();
         attachStatusObserver();
-        attachListObserver();
       }, 0);
     });
   }
