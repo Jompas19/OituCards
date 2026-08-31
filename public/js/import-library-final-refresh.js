@@ -8,7 +8,10 @@
     successHandled: false,
     bypassUntil: 0,
     originalGetCardsByDeck: null,
-    readPatched: false
+    readPatched: false,
+    freshCardsByDeck: null,
+    freshCardsPromise: null,
+    clearFreshTimer: null
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -27,19 +30,47 @@
     return /\bcard(s)? importado(s)?\b/i.test(String(text || ""));
   }
 
-  async function readCardsDirectly(deckId) {
+  function cloneCard(card) {
+    return card ? { ...card } : card;
+  }
+
+  async function readAllCardsDirectly() {
     const db = await OituDB.openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("cards", "readonly");
-      const req = tx.objectStore("cards").index("deckId").getAll(IDBKeyRange.only(deckId));
+      const req = tx.objectStore("cards").getAll();
       req.onsuccess = () => {
-        const cards = req.result || [];
-        cards.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-        resolve(cards);
+        const grouped = new Map();
+        for (const card of req.result || []) {
+          if (!grouped.has(card.deckId)) grouped.set(card.deckId, []);
+          grouped.get(card.deckId).push(card);
+        }
+        grouped.forEach((cards) => cards.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
+        resolve(grouped);
       };
       req.onerror = () => reject(req.error);
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  function primeFreshCardMap() {
+    state.freshCardsByDeck = null;
+    state.freshCardsPromise = readAllCardsDirectly().then((grouped) => {
+      state.freshCardsByDeck = grouped;
+      state.freshCardsPromise = null;
+      return grouped;
+    }).catch((error) => {
+      state.freshCardsPromise = null;
+      throw error;
+    });
+    return state.freshCardsPromise;
+  }
+
+  async function freshCardsForDeck(deckId) {
+    let grouped = state.freshCardsByDeck;
+    if (!grouped && state.freshCardsPromise) grouped = await state.freshCardsPromise;
+    if (!grouped) grouped = await primeFreshCardMap();
+    return (grouped.get(deckId) || []).map(cloneCard);
   }
 
   function patchCardReads() {
@@ -50,9 +81,9 @@
     OituDB.getCardsByDeck = async (deckId) => {
       if (Date.now() < state.bypassUntil) {
         try {
-          return await readCardsDirectly(deckId);
+          return await freshCardsForDeck(deckId);
         } catch (error) {
-          console.warn("OituCards: leitura direta pós-importação falhou; usando cache normal.", error);
+          console.warn("OituCards: leitura agrupada pós-importação falhou; usando cache normal.", error);
         }
       }
       return state.originalGetCardsByDeck(deckId);
@@ -60,10 +91,7 @@
   }
 
   function renderFreshLibrary() {
-    // As leituras feitas durante esta janela ignoram o cache antigo de 30 s.
-    // Duas tentativas curtas cobrem eventual render que já estava em andamento,
-    // mas não ficam observando/re-renderizando a página continuamente.
-    [0, 350].forEach((delay) => {
+    [0, 250].forEach((delay) => {
       setTimeout(() => {
         Promise.resolve(window.OituLibrary?.render?.()).catch((error) => {
           console.warn("OituCards: atualização da biblioteca após importação falhou.", error);
@@ -75,7 +103,19 @@
   function activateFreshReadWindow() {
     patchCardReads();
     state.bypassUntil = Date.now() + CACHE_BYPASS_MS;
-    renderFreshLibrary();
+    clearTimeout(state.clearFreshTimer);
+
+    primeFreshCardMap().then(() => {
+      renderFreshLibrary();
+    }).catch((error) => {
+      console.warn("OituCards: não foi possível preparar o cache fresco pós-importação.", error);
+      renderFreshLibrary();
+    });
+
+    state.clearFreshTimer = setTimeout(() => {
+      state.freshCardsByDeck = null;
+      state.freshCardsPromise = null;
+    }, CACHE_BYPASS_MS + 1500);
   }
 
   function inspectStatus() {
@@ -107,6 +147,8 @@
     loadDirectDeleteActions();
     $("#importDeckButton")?.addEventListener("click", () => {
       state.successHandled = false;
+      state.freshCardsByDeck = null;
+      state.freshCardsPromise = null;
       setTimeout(() => {
         patchCardReads();
         attachStatusObserver();
