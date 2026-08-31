@@ -2,12 +2,26 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadCreateDefaults() {
+    if (document.querySelector('script[data-oitucards-review-model-create-defaults]')) return;
+    const defaults = document.createElement("script");
+    defaults.async = false;
+    defaults.src = "js/review-model-create-defaults.js?v=20260830-2145";
+    defaults.dataset.oitucardsReviewModelCreateDefaults = "true";
+    defaults.onerror = () => console.error("Não foi possível carregar o padrão inicial dos novos modelos de revisão.");
+    document.body.appendChild(defaults);
+  }
+
   function loadReviewSettingsUx() {
-    if (document.querySelector('script[data-oitucards-review-settings-ux]')) return;
+    if (document.querySelector('script[data-oitucards-review-settings-ux]')) {
+      loadCreateDefaults();
+      return;
+    }
     const ux = document.createElement("script");
     ux.async = false;
     ux.src = "js/review-settings-ux.js?v=20260830-2135";
     ux.dataset.oitucardsReviewSettingsUx = "true";
+    ux.addEventListener("load", loadCreateDefaults, { once: true });
     ux.onerror = () => console.error("Não foi possível carregar os refinamentos dos ajustes de revisão.");
     document.body.appendChild(ux);
   }
