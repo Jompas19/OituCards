@@ -225,6 +225,10 @@
         result.nextReviewAt === nextReviewAt;
 
       if (!alreadyCorrect) result = await previousUpdateCard(id, correction);
+
+      // O fluxo de estudo aplica o próprio objeto `patch` ao card em memória.
+      // Mantê-lo sincronizado evita que a sessão continue usando a granularidade antiga.
+      Object.assign(patch, correction);
       return result;
     };
     return true;
