@@ -2,12 +2,31 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadReviewTimePromotion() {
+    if (document.querySelector('script[data-oitucards-review-time-promotion]')) return;
+    const promotion = document.createElement("script");
+    promotion.async = false;
+    promotion.src = "js/review-time-promotion.js?v=20260831-1845";
+    promotion.dataset.oitucardsReviewTimePromotion = "true";
+    promotion.onerror = () => console.error("Não foi possível carregar a promoção automática das unidades de revisão.");
+    document.body.appendChild(promotion);
+  }
+
   function loadReviewTimeUnits() {
-    if (document.querySelector('script[data-oitucards-review-time-units]')) return;
+    const existing = document.querySelector('script[data-oitucards-review-time-units]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadReviewTimePromotion();
+      else existing.addEventListener("load", loadReviewTimePromotion, { once: true });
+      return;
+    }
     const units = document.createElement("script");
     units.async = false;
     units.src = "js/review-time-units.js?v=20260831-1815";
     units.dataset.oitucardsReviewTimeUnits = "true";
+    units.addEventListener("load", () => {
+      units.dataset.loaded = "true";
+      loadReviewTimePromotion();
+    }, { once: true });
     units.onerror = () => console.error("Não foi possível carregar o suporte a revisões em minutos, horas e dias.");
     document.body.appendChild(units);
   }
