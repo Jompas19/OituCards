@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-review-time-units]')) return;
     const units = document.createElement("script");
     units.async = false;
-    units.src = "js/review-time-units.js?v=20260831-1725";
+    units.src = "js/review-time-units.js?v=20260831-1745";
     units.dataset.oitucardsReviewTimeUnits = "true";
     units.onerror = () => console.error("Não foi possível carregar o suporte a revisões em horas.");
     document.body.appendChild(units);
