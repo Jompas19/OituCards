@@ -2,12 +2,26 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadImportLibraryFinalRefresh() {
+    if (document.querySelector('script[data-oitucards-import-library-final-refresh]')) return;
+    const refresh = document.createElement("script");
+    refresh.async = false;
+    refresh.src = "js/import-library-final-refresh.js?v=20260830-2305";
+    refresh.dataset.oitucardsImportLibraryFinalRefresh = "true";
+    refresh.onerror = () => console.error("Não foi possível carregar a atualização final da biblioteca após importação.");
+    document.body.appendChild(refresh);
+  }
+
   function loadLibraryWorkflowUxLite() {
-    if (document.querySelector('script[data-oitucards-library-workflow-ux-lite]')) return;
+    if (document.querySelector('script[data-oitucards-library-workflow-ux-lite]')) {
+      loadImportLibraryFinalRefresh();
+      return;
+    }
     const workflow = document.createElement("script");
     workflow.async = false;
     workflow.src = "js/library-workflow-ux-lite.js?v=20260830-2245";
     workflow.dataset.oitucardsLibraryWorkflowUxLite = "true";
+    workflow.addEventListener("load", loadImportLibraryFinalRefresh, { once: true });
     workflow.onerror = () => console.error("Não foi possível carregar as melhorias leves da biblioteca.");
     document.body.appendChild(workflow);
   }
