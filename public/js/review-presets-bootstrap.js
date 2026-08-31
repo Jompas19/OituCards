@@ -2,12 +2,26 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadLibraryWorkflowUxLite() {
+    if (document.querySelector('script[data-oitucards-library-workflow-ux-lite]')) return;
+    const workflow = document.createElement("script");
+    workflow.async = false;
+    workflow.src = "js/library-workflow-ux-lite.js?v=20260830-2245";
+    workflow.dataset.oitucardsLibraryWorkflowUxLite = "true";
+    workflow.onerror = () => console.error("Não foi possível carregar as melhorias leves da biblioteca.");
+    document.body.appendChild(workflow);
+  }
+
   function loadCreateDefaults() {
-    if (document.querySelector('script[data-oitucards-review-model-create-defaults]')) return;
+    if (document.querySelector('script[data-oitucards-review-model-create-defaults]')) {
+      loadLibraryWorkflowUxLite();
+      return;
+    }
     const defaults = document.createElement("script");
     defaults.async = false;
     defaults.src = "js/review-model-create-defaults.js?v=20260830-2145";
     defaults.dataset.oitucardsReviewModelCreateDefaults = "true";
+    defaults.addEventListener("load", loadLibraryWorkflowUxLite, { once: true });
     defaults.onerror = () => console.error("Não foi possível carregar o padrão inicial dos novos modelos de revisão.");
     document.body.appendChild(defaults);
   }
