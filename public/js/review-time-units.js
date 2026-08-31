@@ -160,6 +160,7 @@
 
     const previousGetDeck = OituDB.getDeck.bind(OituDB);
     const previousGetDecks = OituDB.getDecks.bind(OituDB);
+    const previousGetFolder = OituDB.getFolder.bind(OituDB);
     const previousAddDeck = OituDB.addDeck.bind(OituDB);
     const previousAddFolder = OituDB.addFolder.bind(OituDB);
     const previousUpdateDeck = OituDB.updateDeck.bind(OituDB);
@@ -180,9 +181,17 @@
 
     OituDB.updateDeck = async function (id, patch) {
       const context = desiredContext("deck", id, patch);
+      let inheritedUnit = null;
+      if (!context && patch?.reviewSettings && patch?.folderId && !patch.reviewSettings.intervalUnit) {
+        try {
+          const targetFolder = await previousGetFolder(patch.folderId);
+          inheritedUnit = unitForSettings(targetFolder?.reviewSettings, targetFolder?.reviewModelId);
+        } catch (_) {}
+      }
+
       let nextPatch = patch;
       if (patch?.reviewSettings) {
-        const unit = context?.unit || unitForSettings(patch.reviewSettings, patch.reviewModelId);
+        const unit = context?.unit || inheritedUnit || unitForSettings(patch.reviewSettings, patch.reviewModelId);
         nextPatch = { ...patch, reviewSettings: withUnit(patch.reviewSettings, unit) };
       }
 
@@ -555,6 +564,15 @@
         const observer = new MutationObserver(() => updateScopeCopy("review"));
         observer.observe(summary, { childList: true, subtree: true, characterData: true });
       }
+
+      const folderModal = $("#folderReviewModal");
+      if (folderModal && folderModal.dataset.timeUnitContextObserved !== "true") {
+        folderModal.dataset.timeUnitContextObserved = "true";
+        const observer = new MutationObserver(() => {
+          if (folderModal.classList.contains("hidden")) state.folderApplyContext = null;
+        });
+        observer.observe(folderModal, { attributes: true, attributeFilter: ["class"] });
+      }
     };
 
     install();
@@ -669,11 +687,11 @@
         unit,
         mode: selection === "global" ? "global" : "manual",
         modelId: selection === "global" ? currentGlobalValue() : selection === "custom" ? "custom" : selection,
-        expiresAt: Date.now() + 20000
+        expiresAt: Date.now() + 60000
       };
       setTimeout(() => {
         if (state.folderApplyContext?.expiresAt <= Date.now()) state.folderApplyContext = null;
-      }, 20100);
+      }, 60100);
       return;
     }
 
