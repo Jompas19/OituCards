@@ -6,8 +6,30 @@
   const HOUR = "hours";
   const DAY = "days";
   const RATINGS = ["hard", "medium", "good", "easy"];
+  const INTERVAL_IDS = {
+    study: {
+      hard: "ratingHardInterval",
+      medium: "ratingMediumInterval",
+      good: "ratingGoodInterval",
+      easy: "ratingEasyInterval"
+    },
+    multi: {
+      hard: "multiHintHard",
+      medium: "multiHintMedium",
+      good: "multiHintGood",
+      easy: "multiHintEasy"
+    }
+  };
+  const FRONT_SELECTORS = { study: "#studyFront", multi: "#multiFront" };
+  const RATING_AREAS = { study: "#studyRatingArea", multi: "#multiRatings" };
+
   let dbPatched = false;
   let observersInstalled = false;
+  let reviewViewObserverInstalled = false;
+  let unitDirty = false;
+  let bypassUnitExit = false;
+  let unitPendingExit = null;
+  const renderPending = { study: false, multi: false };
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -184,19 +206,38 @@
     ];
   }
 
+  function replaceBaseMarker(card) {
+    if (!card?.frontHtml) return card;
+    const front = String(card.frontHtml);
+    const match = front.match(/^<!--oc-card:([^>]+)-->/);
+    if (!match) return card;
+    return {
+      ...card,
+      frontHtml: `<!--oc-promote-card:${match[1]}-->${front.slice(match[0].length)}`
+    };
+  }
+
   function patchDatabase() {
     if (dbPatched || !window.OituDB?.updateCard) return false;
     dbPatched = true;
+
     const previousUpdateCard = OituDB.updateCard.bind(OituDB);
+    const previousGetCardsByDeck = OituDB.getCardsByDeck?.bind(OituDB);
     const getCard = OituDB.getCard.bind(OituDB);
     const getDeck = OituDB.getDeck.bind(OituDB);
 
+    if (previousGetCardsByDeck) {
+      OituDB.getCardsByDeck = async function (...args) {
+        const cards = await previousGetCardsByDeck(...args);
+        return Array.isArray(cards) ? cards.map(replaceBaseMarker) : cards;
+      };
+    }
+
     OituDB.updateCard = async function (id, patch) {
       let desired = null;
-      let original = null;
       if (patch && RATINGS.includes(patch.lastRating)) {
         try {
-          original = await getCard(id);
+          const original = await getCard(id);
           const deck = original?.deckId ? await getDeck(original.deckId) : null;
           desired = calculate(original, patch.lastRating, deck);
         } catch (_) {}
@@ -226,8 +267,7 @@
 
       if (!alreadyCorrect) result = await previousUpdateCard(id, correction);
 
-      // O fluxo de estudo aplica o próprio objeto `patch` ao card em memória.
-      // Mantê-lo sincronizado evita que a sessão continue usando a granularidade antiga.
+      // O fluxo de estudo reaproveita o próprio patch no card em memória.
       Object.assign(patch, correction);
       return result;
     };
@@ -236,64 +276,64 @@
 
   function cardIdFromFront(selector) {
     const html = String($(selector)?.innerHTML || "");
-    return html.match(/<!--oc-card:([^>]+)-->/)?.[1] || null;
+    return html.match(/<!--oc-promote-card:([^>]+)-->/)?.[1] ||
+      html.match(/<!--oc-card:([^>]+)-->/)?.[1] || null;
   }
 
-  async function decorate(prefix, frontSelector) {
+  async function decorate(mode) {
+    const frontSelector = FRONT_SELECTORS[mode];
+    const ids = INTERVAL_IDS[mode];
+    if (!frontSelector || !ids || !window.OituDB) return;
+
     const cardId = cardIdFromFront(frontSelector);
-    if (!cardId || !window.OituDB) return;
+    if (!cardId) return;
+
     try {
       const card = await OituDB.getCard(cardId);
       const deck = card?.deckId ? await OituDB.getDeck(card.deckId) : null;
       if (!card || !deck) return;
+
       for (const rating of RATINGS) {
         const duration = calculate(card, rating, deck);
-        const target = $(`#${prefix}${rating.charAt(0).toUpperCase()}${rating.slice(1)}`);
+        const target = $(`#${ids[rating]}`);
         if (!target || !duration) continue;
-        target.dataset.promotedReviewLabel = `(revisão em ${format(duration)})`;
+        const desired = `(revisão em ${format(duration)})`;
+        if (target.textContent !== desired) target.textContent = desired;
       }
     } catch (_) {}
   }
 
-  function clearLabels(prefix) {
-    for (const rating of RATINGS) {
-      const target = $(`#${prefix}${rating.charAt(0).toUpperCase()}${rating.slice(1)}`);
-      if (target) delete target.dataset.promotedReviewLabel;
-    }
-  }
-
-  function ensureStyle() {
-    if ($("#reviewTimePromotionStyle")) return;
-    const style = document.createElement("style");
-    style.id = "reviewTimePromotionStyle";
-    style.textContent = `
-      .rating-interval[data-promoted-review-label]{font-size:0}
-      .rating-interval[data-promoted-review-label]::after{content:attr(data-promoted-review-label);font-size:.78rem}
-    `;
-    document.head.appendChild(style);
+  function scheduleDecorate(mode) {
+    if (renderPending[mode]) return;
+    renderPending[mode] = true;
+    setTimeout(async () => {
+      renderPending[mode] = false;
+      await decorate(mode);
+    }, 0);
   }
 
   function installObservers() {
     if (observersInstalled) return;
     observersInstalled = true;
+
     const install = () => {
-      const studyFront = $("#studyFront");
-      if (studyFront && studyFront.dataset.reviewPromotionObserved !== "true") {
-        studyFront.dataset.reviewPromotionObserved = "true";
-        new MutationObserver(() => {
-          clearLabels("rating");
-          setTimeout(() => decorate("rating", "#studyFront"), 0);
-        }).observe(studyFront, { childList: true, subtree: true });
-      }
-      const multiFront = $("#multiFront");
-      if (multiFront && multiFront.dataset.reviewPromotionObserved !== "true") {
-        multiFront.dataset.reviewPromotionObserved = "true";
-        new MutationObserver(() => {
-          clearLabels("multiHint");
-          setTimeout(() => decorate("multiHint", "#multiFront"), 0);
-        }).observe(multiFront, { childList: true, subtree: true });
+      for (const mode of ["study", "multi"]) {
+        const front = $(FRONT_SELECTORS[mode]);
+        if (front && front.dataset.reviewPromotionFrontObserved !== "true") {
+          front.dataset.reviewPromotionFrontObserved = "true";
+          new MutationObserver(() => scheduleDecorate(mode))
+            .observe(front, { childList: true, subtree: true });
+        }
+
+        const ratings = $(RATING_AREAS[mode]);
+        if (ratings && ratings.dataset.reviewPromotionRatingsObserved !== "true") {
+          ratings.dataset.reviewPromotionRatingsObserved = "true";
+          new MutationObserver(() => scheduleDecorate(mode))
+            .observe(ratings, { childList: true, subtree: true, characterData: true });
+        }
       }
     };
+
     install();
     setTimeout(install, 0);
     setTimeout(install, 150);
@@ -304,17 +344,18 @@
       const previous = OituStudy.openConfig;
       const wrapped = async function (...args) {
         const result = await previous.apply(this, args);
-        setTimeout(() => decorate("rating", "#studyFront"), 0);
+        scheduleDecorate("study");
         return result;
       };
       wrapped.__reviewPromotionWrapped = true;
       OituStudy.openConfig = wrapped;
     }
+
     if (window.OituMultiStudy?.openConfig && !OituMultiStudy.openConfig.__reviewPromotionWrapped) {
       const previous = OituMultiStudy.openConfig;
       const wrapped = async function (...args) {
         const result = await previous.apply(this, args);
-        setTimeout(() => decorate("multiHint", "#multiFront"), 0);
+        scheduleDecorate("multi");
         return result;
       };
       wrapped.__reviewPromotionWrapped = true;
@@ -322,18 +363,139 @@
     }
   }
 
+  function reviewViewActive() {
+    return $("#reviewSettingsView")?.classList.contains("active") === true;
+  }
+
+  function closeUnsavedModal() {
+    const modal = $("#reviewUnsavedModal");
+    modal?.classList.add("hidden");
+    if (!document.querySelector(".modal-backdrop:not(.hidden)")) document.body.style.overflow = "";
+  }
+
+  function openUnitUnsaved(exitButton) {
+    const modal = $("#reviewUnsavedModal");
+    if (!modal) {
+      const discard = window.confirm("Há alterações de revisão que não foram salvas. Sair sem salvar?");
+      if (discard) {
+        unitDirty = false;
+        bypassUnitExit = true;
+        exitButton?.click();
+      }
+      return;
+    }
+    unitPendingExit = exitButton || null;
+    modal.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => $("#reviewUnsavedSave")?.focus());
+  }
+
+  function handleUnitChange(event) {
+    const select = event.target instanceof HTMLSelectElement ? event.target : null;
+    if (!event.isTrusted || !reviewViewActive()) return;
+    if (select?.dataset.reviewTimeScope !== "review") return;
+    unitDirty = true;
+  }
+
+  function handleReviewExit(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    const exit = target?.closest("#reviewSettingsBackButton,#cancelReviewSettingsButton");
+    if (!exit) return;
+
+    if (bypassUnitExit) {
+      bypassUnitExit = false;
+      return;
+    }
+    if (!unitDirty || !reviewViewActive()) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    openUnitUnsaved(exit);
+  }
+
+  function handleUnsavedAction(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    if (target.closest("#reviewUnsavedDiscard")) {
+      if (!unitDirty) return;
+      const exit = unitPendingExit;
+      unitPendingExit = null;
+      unitDirty = false;
+
+      // Se o modal foi aberto pelo controle antigo (número/modelo + unidade),
+      // deixamos esse controle concluir a saída normalmente.
+      if (!exit) return;
+
+      // Se apenas a unidade mudou, fomos nós que abrimos o modal.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeUnsavedModal();
+      bypassUnitExit = true;
+      exit.click();
+      return;
+    }
+
+    if (target.closest("#reviewUnsavedContinue")) {
+      unitPendingExit = null;
+      return;
+    }
+
+    if (target.closest("#reviewUnsavedSave")) {
+      unitPendingExit = null;
+    }
+  }
+
+  function clearDirtyAfterSave() {
+    const check = () => {
+      const status = String($("#reviewSettingsStatus")?.textContent || "");
+      if (/ajustes salvos/i.test(status)) unitDirty = false;
+    };
+    setTimeout(check, 80);
+    setTimeout(check, 300);
+    setTimeout(check, 800);
+  }
+
+  function installReviewViewObserver() {
+    if (reviewViewObserverInstalled) return;
+    const view = $("#reviewSettingsView");
+    if (!view) return;
+    reviewViewObserverInstalled = true;
+    let wasActive = view.classList.contains("active");
+    new MutationObserver(() => {
+      const active = view.classList.contains("active");
+      if (active && !wasActive) {
+        unitDirty = false;
+        unitPendingExit = null;
+      }
+      if (!active) unitPendingExit = null;
+      wasActive = active;
+    }).observe(view, { attributes: true, attributeFilter: ["class"] });
+  }
+
+  function handleReviewSubmit(event) {
+    if (event.target?.id === "reviewSettingsForm") clearDirtyAfterSave();
+  }
+
   function init() {
-    ensureStyle();
     patchDatabase();
     installObservers();
     wrapStudy();
+    installReviewViewObserver();
+
     setTimeout(() => {
       patchDatabase();
       installObservers();
       wrapStudy();
+      installReviewViewObserver();
     }, 0);
     setTimeout(wrapStudy, 250);
   }
+
+  document.addEventListener("change", handleUnitChange, true);
+  document.addEventListener("click", handleReviewExit, true);
+  document.addEventListener("click", handleUnsavedAction, true);
+  document.addEventListener("submit", handleReviewSubmit, false);
 
   window.OituReviewTimePromotion = { calculate, format, promoteRounded };
 
