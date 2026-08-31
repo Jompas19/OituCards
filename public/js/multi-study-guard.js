@@ -154,7 +154,7 @@
     if (document.querySelector('script[data-oitucards-review-models]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/review-presets-bootstrap.js?v=20260831-2050";
+    script.src = "js/review-presets-bootstrap.js?v=20260831-2145";
     script.dataset.oitucardsReviewModels = "true";
     script.onerror = () => console.error("Não foi possível carregar os modelos de revisão.");
     document.body.appendChild(script);
