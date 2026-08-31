@@ -2,13 +2,35 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadFolderReviewUnitFix() {
+    if (document.querySelector('script[data-oitucards-folder-review-unit-fix]')) return;
+    const fix = document.createElement("script");
+    fix.async = false;
+    fix.src = "js/folder-review-unit-fix.js?v=20260831-2145";
+    fix.dataset.oitucardsFolderReviewUnitFix = "true";
+    fix.onerror = () => console.error("Não foi possível carregar a correção das unidades herdadas da pasta.");
+    document.body.appendChild(fix);
+  }
+
   function loadReviewTimePromotion() {
-    if (document.querySelector('script[data-oitucards-review-time-promotion]')) return;
+    const existing = document.querySelector('script[data-oitucards-review-time-promotion]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadFolderReviewUnitFix();
+      else existing.addEventListener("load", loadFolderReviewUnitFix, { once: true });
+      return;
+    }
     const promotion = document.createElement("script");
     promotion.async = false;
     promotion.src = "js/review-time-promotion.js?v=20260831-2050";
     promotion.dataset.oitucardsReviewTimePromotion = "true";
-    promotion.onerror = () => console.error("Não foi possível carregar a promoção automática das unidades de revisão.");
+    promotion.addEventListener("load", () => {
+      promotion.dataset.loaded = "true";
+      loadFolderReviewUnitFix();
+    }, { once: true });
+    promotion.onerror = () => {
+      console.error("Não foi possível carregar a promoção automática das unidades de revisão.");
+      loadFolderReviewUnitFix();
+    };
     document.body.appendChild(promotion);
   }
 
