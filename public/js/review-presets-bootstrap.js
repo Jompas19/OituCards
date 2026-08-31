@@ -2,13 +2,35 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadReviewTimeUnits() {
+    if (document.querySelector('script[data-oitucards-review-time-units]')) return;
+    const units = document.createElement("script");
+    units.async = false;
+    units.src = "js/review-time-units.js?v=20260831-1725";
+    units.dataset.oitucardsReviewTimeUnits = "true";
+    units.onerror = () => console.error("Não foi possível carregar o suporte a revisões em horas.");
+    document.body.appendChild(units);
+  }
+
   function loadImportLibraryFinalRefresh() {
-    if (document.querySelector('script[data-oitucards-import-library-final-refresh]')) return;
+    const existing = document.querySelector('script[data-oitucards-import-library-final-refresh]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadReviewTimeUnits();
+      else existing.addEventListener("load", loadReviewTimeUnits, { once: true });
+      return;
+    }
     const refresh = document.createElement("script");
     refresh.async = false;
     refresh.src = "js/import-library-final-refresh.js?v=20260831-0015";
     refresh.dataset.oitucardsImportLibraryFinalRefresh = "true";
-    refresh.onerror = () => console.error("Não foi possível carregar a atualização final da biblioteca após importação.");
+    refresh.addEventListener("load", () => {
+      refresh.dataset.loaded = "true";
+      loadReviewTimeUnits();
+    }, { once: true });
+    refresh.onerror = () => {
+      console.error("Não foi possível carregar a atualização final da biblioteca após importação.");
+      loadReviewTimeUnits();
+    };
     document.body.appendChild(refresh);
   }
 
