@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-review-time-promotion]')) return;
     const promotion = document.createElement("script");
     promotion.async = false;
-    promotion.src = "js/review-time-promotion.js?v=20260831-1855";
+    promotion.src = "js/review-time-promotion.js?v=20260831-2050";
     promotion.dataset.oitucardsReviewTimePromotion = "true";
     promotion.onerror = () => console.error("Não foi possível carregar a promoção automática das unidades de revisão.");
     document.body.appendChild(promotion);
