@@ -67,13 +67,10 @@
       BIDI_CONTROL_RE.lastIndex = 0;
 
       if (isPtBr && needsNaturalOrder) {
-        const stack = String(new Error().stack || "");
-        if (stack.includes("folderChildrenMap") || stack.includes("decksByFolderMap")) {
-          return naturalCollator.compare(
-            left.replace(BIDI_CONTROL_RE, ""),
-            right.replace(BIDI_CONTROL_RE, "")
-          );
-        }
+        return naturalCollator.compare(
+          left.replace(BIDI_CONTROL_RE, ""),
+          right.replace(BIDI_CONTROL_RE, "")
+        );
       }
       return originalLocaleCompare.apply(this, arguments);
     };
