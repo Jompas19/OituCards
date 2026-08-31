@@ -2,12 +2,26 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadReviewSettingsUx() {
+    if (document.querySelector('script[data-oitucards-review-settings-ux]')) return;
+    const ux = document.createElement("script");
+    ux.async = false;
+    ux.src = "js/review-settings-ux.js?v=20260830-2135";
+    ux.dataset.oitucardsReviewSettingsUx = "true";
+    ux.onerror = () => console.error("Não foi possível carregar os refinamentos dos ajustes de revisão.");
+    document.body.appendChild(ux);
+  }
+
   function loadFolderSelectionFix() {
-    if (document.querySelector('script[data-oitucards-review-model-folder-selection-fix]')) return;
+    if (document.querySelector('script[data-oitucards-review-model-folder-selection-fix]')) {
+      loadReviewSettingsUx();
+      return;
+    }
     const fix = document.createElement("script");
     fix.async = false;
     fix.src = "js/review-model-folder-selection-fix.js?v=20260830-2105";
     fix.dataset.oitucardsReviewModelFolderSelectionFix = "true";
+    fix.addEventListener("load", loadReviewSettingsUx, { once: true });
     fix.onerror = () => console.error("Não foi possível carregar a correção da seleção de modelo das pastas.");
     document.body.appendChild(fix);
   }
