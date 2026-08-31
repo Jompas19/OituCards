@@ -400,24 +400,31 @@
     const unit = scopeUnits[scope] || DAY;
     if (scope === "review") {
       const intro = $("#reviewSettingsForm .review-settings-intro p");
-      if (intro) intro.textContent = unit === HOUR
-        ? "Defina em quantas horas o card deve reaparecer após a primeira avaliação."
-        : "Defina em quantos dias o card deve reaparecer após a primeira avaliação.";
+      if (intro) {
+        const desiredIntro = unit === HOUR
+          ? "Defina em quantas horas o card deve reaparecer após a primeira avaliação."
+          : "Defina em quantos dias o card deve reaparecer após a primeira avaliação.";
+        if (intro.textContent !== desiredIntro) intro.textContent = desiredIntro;
+      }
       const summary = $("#reviewRuleSummary");
       if (summary) {
         const max = Number($("#reviewMaxDays")?.value || 0);
         const paragraphs = summary.querySelectorAll("p");
         const last = paragraphs[paragraphs.length - 1];
         if (last && /Intervalo máximo:/i.test(last.textContent || "")) {
-          last.innerHTML = `Intervalo máximo: <strong>${max} ${unitLabel(unit, max)}</strong>.`;
+          const desired = `Intervalo máximo: <strong>${max} ${unitLabel(unit, max)}</strong>.`;
+          if (last.innerHTML !== desired) last.innerHTML = desired;
         }
       }
     }
     if (scope === "folder") {
       const first = $("#folderReviewForm .folder-review-section p");
-      if (first) first.textContent = unit === HOUR
-        ? "Em quantas horas um card novo deve reaparecer."
-        : "Em quantos dias um card novo deve reaparecer.";
+      if (first) {
+        const desired = unit === HOUR
+          ? "Em quantas horas um card novo deve reaparecer."
+          : "Em quantos dias um card novo deve reaparecer.";
+        if (first.textContent !== desired) first.textContent = desired;
+      }
     }
   }
 
@@ -501,7 +508,8 @@
     root.querySelectorAll(".rating-interval").forEach((hint) => {
       const text = String(hint.textContent || "");
       if (!/revisão em/i.test(text) || !/\bdias?\b/i.test(text)) return;
-      hint.textContent = text.replace(/\b1 dia\b/i, "1 hora").replace(/\bdias\b/gi, "horas").replace(/\bdia\b/gi, "hora");
+      const desired = text.replace(/\b1 dia\b/i, "1 hora").replace(/\bdias\b/gi, "horas").replace(/\bdia\b/gi, "hora");
+      if (hint.textContent !== desired) hint.textContent = desired;
     });
   }
 
@@ -521,14 +529,14 @@
       if (studyRatings && studyRatings.dataset.timeUnitObserved !== "true") {
         studyRatings.dataset.timeUnitObserved = "true";
         const observer = new MutationObserver(() => decorateRatingHints(studyRatings, state.studyUnit));
-        observer.observe(studyRatings, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+        observer.observe(studyRatings, { childList: true, subtree: true, characterData: true });
       }
 
       const multiRatings = $("#multiRatings");
       if (multiRatings && multiRatings.dataset.timeUnitObserved !== "true") {
         multiRatings.dataset.timeUnitObserved = "true";
         const observer = new MutationObserver(() => decorateRatingHints(multiRatings, currentMultiUnitFromChip()));
-        observer.observe(multiRatings, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+        observer.observe(multiRatings, { childList: true, subtree: true, characterData: true });
       }
 
       const chip = $("#multiDeckChip");
