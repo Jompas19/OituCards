@@ -243,6 +243,16 @@
     return true;
   }
 
+  function loadCreationDefaultFix() {
+    if (document.querySelector('script[data-oitucards-review-creation-default-fix]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/review-creation-default-fix.js?v=20260831-2145";
+    script.dataset.oitucardsReviewCreationDefaultFix = "true";
+    script.onerror = () => console.error("Não foi possível carregar a correção do modelo padrão para novos baralhos.");
+    document.body.appendChild(script);
+  }
+
   function scheduleLibraryRender(delay = 100) {
     clearTimeout(libraryTimer);
     libraryTimer = setTimeout(() => {
@@ -292,6 +302,7 @@
     patchDatabase();
     wrapStudy();
     installReviewObserver();
+    loadCreationDefaultFix();
     setTimeout(() => { patchDatabase(); wrapStudy(); installReviewObserver(); }, 0);
     setTimeout(() => { wrapStudy(); installReviewObserver(); }, 300);
   }
