@@ -98,6 +98,31 @@
     return next;
   }
 
+  function settingsProfile(settings) {
+    const source = settings || {};
+    const units = source.intervalUnits || {};
+    const legacy = source.intervalUnit ? normalizeUnit(source.intervalUnit) : null;
+    return {
+      hard: normalizeUnit(units.hard || legacy || DAY),
+      medium: normalizeUnit(units.medium || legacy || DAY),
+      good: normalizeUnit(units.good || legacy || DAY),
+      easy: normalizeUnit(units.easy || legacy || DAY),
+      max: normalizeUnit(source.maxIntervalUnit || legacy || DAY)
+    };
+  }
+
+  function sameSettings(current, desired) {
+    if (!current || !desired) return false;
+    const a = cloneSettings(current, settingsProfile(current));
+    const b = cloneSettings(desired, settingsProfile(desired));
+    if (a.maxIntervalDays !== b.maxIntervalDays || a.maxIntervalUnit !== b.maxIntervalUnit) return false;
+    return RATINGS.every((rating) =>
+      a.newIntervals[rating] === b.newIntervals[rating] &&
+      a.multipliers[rating] === b.multipliers[rating] &&
+      a.intervalUnits[rating] === b.intervalUnits[rating]
+    );
+  }
+
   function currentGlobalValue() {
     const stored = String(localStorage.getItem(GLOBAL_MODEL_KEY) || "system");
     if (stored === "system") return "system";
@@ -121,13 +146,7 @@
     const current = readJson(AUTHORITY_STORAGE_KEY, {});
     const data = current && typeof current === "object" && !Array.isArray(current) ? current : {};
     data[id] = {
-      reviewSettings: cloneSettings(settings, {
-        hard: settings.intervalUnits?.hard,
-        medium: settings.intervalUnits?.medium,
-        good: settings.intervalUnits?.good,
-        easy: settings.intervalUnits?.easy,
-        max: settings.maxIntervalUnit
-      }),
+      reviewSettings: cloneSettings(settings, settingsProfile(settings)),
       reviewModelMode: "global",
       reviewModelId: modelId,
       updatedAt: new Date().toISOString()
@@ -148,13 +167,7 @@
 
   async function persistGlobalDirect(id, modelId = currentGlobalValue(), settings = globalSettings(modelId)) {
     if (!id || !window.OituDB?.openDB) return null;
-    const safeSettings = cloneSettings(settings, {
-      hard: settings.intervalUnits?.hard,
-      medium: settings.intervalUnits?.medium,
-      good: settings.intervalUnits?.good,
-      easy: settings.intervalUnits?.easy,
-      max: settings.maxIntervalUnit
-    });
+    const safeSettings = cloneSettings(settings, settingsProfile(settings));
     const db = await OituDB.openDB();
     const updated = await new Promise((resolve, reject) => {
       const tx = db.transaction("decks", "readwrite");
@@ -184,8 +197,7 @@
 
   async function applyGlobalToEntity(id) {
     const modelId = currentGlobalValue();
-    const settings = globalSettings(modelId);
-    return persistGlobalDirect(id, modelId, settings);
+    return persistGlobalDirect(id, modelId, globalSettings(modelId));
   }
 
   async function applyGlobalToDeck(id) {
@@ -232,7 +244,10 @@
       const settings = globalSettings(modelId);
       const entities = await readRawEntities();
       const followers = entities.filter((item) => item?.reviewModelMode === "global");
-      for (const entity of followers) await persistGlobalDirect(entity.id, modelId, settings);
+      for (const entity of followers) {
+        const needsUpdate = String(entity.reviewModelId || "") !== modelId || !sameSettings(entity.reviewSettings, settings);
+        if (needsUpdate) await persistGlobalDirect(entity.id, modelId, settings);
+      }
     } catch (error) {
       console.warn("OituCards: não foi possível sincronizar todos os itens que seguem o modelo geral.", error);
     } finally {
@@ -241,7 +256,10 @@
   }
 
   function refreshCounts() {
-    window.OituLibraryDueSync?.sync?.().catch?.(() => {});
+    try {
+      const promise = window.OituLibraryDueSync?.sync?.();
+      if (promise?.catch) promise.catch(() => {});
+    } catch (_) {}
   }
 
   function handleClick(event) {
