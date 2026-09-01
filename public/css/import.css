@@ -1,11 +1,11 @@
 @import url("review-presets.css?v=20260901-1515");
 
 /* CSS crítico do primeiro frame: espelha o refinamento final sem esperar JS dinâmico. */
-.brand-button{height:48px;max-width:min(360px,58vw);min-width:138px;overflow:visible}
+.brand-button{height:48px;max-width:min(360px,58vw);min-width:138px;overflow:visible;opacity:0;transition:opacity .1s ease}
+.brand-button.brand-logo-ready{opacity:1}
 .brand-official-logo{display:block;width:auto;height:46px;max-width:100%;object-fit:contain;object-position:left center;background:transparent;border:0}
-.brand-button:not(.brand-logo-ready) .brand-mark{display:grid!important}
-.brand-button:not(.brand-logo-ready) .brand-name{display:inline!important}
-.brand-button:not(.brand-logo-ready) .brand-official-logo{display:none!important}
+.brand-button .brand-mark,.brand-button .brand-name{display:none!important}
+#siteSettingsPanel:not(.is-open){opacity:0!important;visibility:hidden!important;pointer-events:none!important}
 #deckList.deck-list{gap:8px}
 #deckList .deck-row,#deckList .library-tree-row{padding:12px 15px;gap:13px;border-radius:14px}
 #deckList .deck-name-button,#deckList .folder-toggle-button{font-weight:600;font-size:1rem;line-height:1.25}
@@ -140,4 +140,4 @@ body.study-config-modal-open{overflow:hidden!important}
   #deckList .deck-row,#deckList .library-tree-row{padding:10px 11px;gap:9px}
   #deckList .folder-main{min-height:56px}
 }
-@media(prefers-reduced-motion:reduce){.import-dropzone,.import-progress-bar{transition:none}}
+@media(prefers-reduced-motion:reduce){.import-dropzone,.import-progress-bar,.brand-button{transition:none}}
