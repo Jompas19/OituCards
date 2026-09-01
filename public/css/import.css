@@ -1,4 +1,8 @@
-.import-modal-panel{width:min(760px,calc(100vw - 32px));max-height:min(88vh,900px);overflow:auto}
+@import url("review-presets.css?v=20260901-1515");
+@import url("visual-refinement.css?v=20260901-1515");
+@import url("visual-polish.css?v=20260901-1515");
+
+.import-modal-panel{width:min(760px,calc(100vw - 32px));max-height:min(88vh,900px);overflow:auto;padding:24px;overflow-x:hidden}
 .import-lead{margin:7px 0 0;color:var(--muted);font-size:.9rem;line-height:1.5;max-width:620px}
 .import-format-chips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 16px}
 .import-format-chip{display:inline-flex;align-items:center;min-height:28px;padding:0 9px;border:1px solid var(--line);border-radius:999px;background:var(--surface-2);color:var(--muted);font-size:.72rem;font-weight:800;letter-spacing:.035em}
@@ -23,7 +27,7 @@
 .import-info-box ul{margin:9px 0 7px;padding-left:20px}
 .import-info-box li+li{margin-top:5px}
 .import-info-box b{color:var(--text)}
-.import-info-box code{font-size:.76rem}
+.import-info-box code{font-size:.76rem;white-space:normal;overflow-wrap:anywhere}
 .import-format-hint{margin:9px 0 0}
 .import-progress-wrap{margin-top:16px}
 .import-progress-track{height:8px;overflow:hidden;border-radius:999px;background:var(--surface-2);border:1px solid var(--line)}
@@ -34,5 +38,95 @@
 .import-status[data-tone="error"]{color:#b42318}
 .import-status[data-tone="working"]{color:var(--text)}
 .imported-audio-placeholder{display:inline-block;padding:2px 6px;border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:.82em}
-@media(max-width:640px){.import-modal-panel{width:calc(100vw - 18px);max-height:92vh}.import-dropzone{min-height:145px;padding:20px 14px}.import-selected-file{align-items:flex-start}.import-format-chips{gap:5px}.import-format-chip{font-size:.67rem}}
+
+.import-modal-panel .modal-header>div,
+.import-modal-panel .import-info-box,
+.import-modal-panel .import-deck-name-row,
+.review-unsaved-modal .modal-header>div{min-width:0}
+.import-modal-panel h2,
+.import-modal-panel p,
+.import-modal-panel li,
+.import-modal-panel .field-hint,
+.import-modal-panel .import-status,
+.review-unsaved-modal h2,
+.review-unsaved-modal p{max-width:100%;overflow-wrap:anywhere;word-break:normal}
+.review-unsaved-modal{width:min(430px,calc(100vw - 28px));padding:24px;overflow-x:hidden}
+.review-unsaved-modal .modal-header{align-items:flex-start}
+.review-unsaved-copy{max-width:100%}
+
+body.study-config-modal-open{overflow:hidden!important}
+#studyConfigView.study-config-modal-view.active,
+#multiStudyConfigView.study-config-modal-view.active{
+  position:fixed;
+  inset:0;
+  z-index:130;
+  display:grid!important;
+  place-items:center;
+  width:auto;
+  min-height:100dvh;
+  padding:20px;
+  overflow:auto;
+  background:rgba(3,7,18,.58);
+  backdrop-filter:blur(6px);
+  -webkit-backdrop-filter:blur(6px);
+}
+#studyConfigView.study-config-modal-view .breadcrumb,
+#multiStudyConfigView.study-config-modal-view .breadcrumb{display:none!important}
+#studyConfigView.study-config-modal-view .study-config-wrap,
+#multiStudyConfigView.study-config-modal-view .study-config-wrap{
+  width:min(720px,100%);
+  max-height:calc(100dvh - 40px);
+  margin:0;
+  overflow:auto;
+  overscroll-behavior:contain;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:22px;
+  box-shadow:var(--shadow);
+}
+#studyConfigView.study-config-modal-view .study-config-heading,
+#multiStudyConfigView.study-config-modal-view .study-config-heading{
+  position:relative;
+  margin:0;
+  padding:24px 76px 18px 24px;
+}
+#studyConfigView.study-config-modal-view .study-config-heading h1,
+#multiStudyConfigView.study-config-modal-view .study-config-heading h1{font-size:clamp(1.55rem,4vw,2.15rem)}
+#studyConfigView.study-config-modal-view .study-config-card,
+#multiStudyConfigView.study-config-modal-view .study-config-card{
+  margin:0;
+  border:0;
+  border-top:1px solid var(--line);
+  border-radius:0 0 21px 21px;
+  box-shadow:none;
+  overflow:visible;
+}
+.study-config-window-close{
+  position:absolute;
+  top:20px;
+  right:20px;
+  z-index:2;
+}
+
+.brand-button{min-width:138px}
+.brand-button:not(.brand-logo-ready) .brand-mark{display:grid!important}
+.brand-button:not(.brand-logo-ready) .brand-name{display:inline!important}
+.brand-button:not(.brand-logo-ready) .brand-official-logo{display:none!important}
+
+@media(max-width:640px){
+  .import-modal-panel{width:calc(100vw - 18px);max-height:92vh;padding:18px}
+  .import-dropzone{min-height:145px;padding:20px 14px}
+  .import-selected-file{align-items:flex-start}
+  .import-format-chips{gap:5px}
+  .import-format-chip{font-size:.67rem}
+  .review-unsaved-modal{width:calc(100vw - 18px);padding:18px}
+  #studyConfigView.study-config-modal-view.active,
+  #multiStudyConfigView.study-config-modal-view.active{padding:9px;align-items:center}
+  #studyConfigView.study-config-modal-view .study-config-wrap,
+  #multiStudyConfigView.study-config-modal-view .study-config-wrap{max-height:calc(100dvh - 18px);border-radius:18px}
+  #studyConfigView.study-config-modal-view .study-config-heading,
+  #multiStudyConfigView.study-config-modal-view .study-config-heading{padding:19px 62px 14px 18px}
+  .study-config-window-close{top:14px;right:14px}
+  .brand-button{min-width:120px}
+}
 @media(prefers-reduced-motion:reduce){.import-dropzone,.import-progress-bar{transition:none}}
