@@ -33,4 +33,10 @@
   wrapped.__oitucardsInstantSummary = true;
   wrapped.__oitucardsPrevious = previous;
   OituDB.getCardsByDeck = wrapped;
+
+  try {
+    if (!localStorage.getItem("OituCardsDeckStatsV3")) {
+      OituInstantScale.rebuildAllStats().catch(() => {});
+    }
+  } catch (_) {}
 })();
