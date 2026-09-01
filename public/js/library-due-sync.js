@@ -7,6 +7,7 @@
     rawPromise: null,
     dirty: true,
     syncPromise: null,
+    rerunRequested: false,
     dueTimer: null,
     dbPatched: false,
     libraryWrapped: false
@@ -145,7 +146,10 @@
 
   async function syncBadges() {
     if (!window.OituDB?.openDB || !$("#deckList")) return;
-    if (state.syncPromise) return state.syncPromise;
+    if (state.syncPromise) {
+      state.rerunRequested = true;
+      return state.syncPromise;
+    }
 
     state.syncPromise = (async () => {
       const [cards, decks, folders] = await Promise.all([
@@ -165,6 +169,10 @@
       scheduleNextDue(counts.nextFuture);
     })().finally(() => {
       state.syncPromise = null;
+      if (state.rerunRequested) {
+        state.rerunRequested = false;
+        setTimeout(() => syncBadges().catch(() => {}), 0);
+      }
     });
 
     return state.syncPromise;
