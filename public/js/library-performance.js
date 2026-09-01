@@ -7,7 +7,7 @@
     ["js/library-summary-preinstall.js?v=20260901-1925", "oitucardsLibrarySummaryPreinstall"],
     ["js/library-entity-snapshot.js?v=20260901-1925", "oitucardsLibraryEntitySnapshot"],
     ["js/library-render-guard.js?v=20260901-1925", "oitucardsLibraryRenderGuard"],
-    ["js/import-apkg-worker-client.js?v=20260901-1925", "oitucardsApkgWorkerClient"],
+    ["js/import-apkg-worker-client.js?v=20260901-2055", "oitucardsApkgWorkerClient"],
     ["js/library-performance-extras.js?v=20260901-1925", "oitucardsLibraryPerformanceExtras"]
   ];
 
