@@ -2,6 +2,8 @@
   const importState = {
     active: false,
     deckSnapshotPromise: null,
+    folderSnapshotPromise: null,
+    folderByKey: null,
     sanitizeCache: new Map(),
     statusObserver: null,
     mediaRefByDataUrl: new Map(),
@@ -271,21 +273,71 @@
     OituDB.getDecks = patched;
   }
 
+  function folderCacheKey(parentId, name) {
+    return `${parentId || ""}\u0000${String(name || "").trim().toLocaleLowerCase("pt-BR")}`;
+  }
+
+  async function importFolderMap() {
+    if (importState.folderByKey) return importState.folderByKey;
+    if (!importState.folderSnapshotPromise) {
+      importState.folderSnapshotPromise = Promise.resolve(OituDB.getFolders()).then((folders) => folders || []);
+    }
+    const folders = await importState.folderSnapshotPromise;
+    const map = new Map();
+    folders.forEach((folder) => map.set(folderCacheKey(folder.parentId || null, folder.name), folder));
+    importState.folderByKey = map;
+    return map;
+  }
+
+  async function ensureImportFolderPath(parts) {
+    if (!parts.length) return null;
+    const map = await importFolderMap();
+    let parentId = null;
+    for (const rawPart of parts) {
+      const name = limitDeckPathComponent(rawPart);
+      const key = folderCacheKey(parentId, name);
+      let folder = map.get(key);
+      if (!folder) {
+        folder = await OituDB.addFolder(name, parentId);
+        map.set(key, folder);
+      }
+      parentId = folder.id;
+    }
+    return parentId;
+  }
+
   function patchMediaBarrier() {
     if (importState.mediaBarrierPatched || !window.OituDB?.addDeck) return;
     importState.mediaBarrierPatched = true;
     const originalAddDeck = OituDB.addDeck.bind(OituDB);
+
     OituDB.addDeck = async function (...args) {
-      if (importState.active && (importState.mediaQueue.length || importState.mediaFlushScheduled)) {
-        await flushAllMedia();
+      const requestedName = String(args[0] || "");
+      const hierarchy = importState.active
+        ? requestedName.split("::").map((part) => part.trim()).filter(Boolean)
+        : [];
+      const leafName = hierarchy.length > 1 ? hierarchy[hierarchy.length - 1] : requestedName;
+      const folderPromise = hierarchy.length > 1
+        ? ensureImportFolderPath(hierarchy.slice(0, -1))
+        : Promise.resolve(null);
+      const mediaPromise = importState.active && (importState.mediaQueue.length || importState.mediaFlushScheduled)
+        ? flushAllMedia()
+        : Promise.resolve();
+
+      const [parentId] = await Promise.all([folderPromise, mediaPromise]);
+      let deck = await originalAddDeck(leafName, ...args.slice(1));
+      if (importState.active && parentId && deck?.id) {
+        deck = await OituDB.updateDeck(deck.id, { folderId: parentId });
       }
-      return originalAddDeck(...args);
+      return deck;
     };
   }
 
   function finishImportSession() {
     importState.active = false;
     importState.deckSnapshotPromise = null;
+    importState.folderSnapshotPromise = null;
+    importState.folderByKey = null;
     importState.sanitizeCache.clear();
     importState.mediaRefByDataUrl.clear();
     importState.mediaQueue.length = 0;
@@ -309,6 +361,8 @@
   function beginImportSession() {
     importState.active = true;
     importState.deckSnapshotPromise = null;
+    importState.folderSnapshotPromise = null;
+    importState.folderByKey = null;
     importState.sanitizeCache.clear();
     importState.mediaRefByDataUrl.clear();
     importState.mediaQueue.length = 0;
