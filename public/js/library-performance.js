@@ -1,3 +1,7 @@
+if (document.readyState === "loading" && !window.__oitucardsInstantScaleFastPath) {
+  document.write('<script src="js/instant-scale-fastpath.js?v=20260901-1635" data-oitucards-instant-scale-fastpath="true"><\/script>');
+}
+
 (function () {
   const DEFAULT_EMOJI = "📁";
   const EMOJI_CHOICES = ["📁", "📚", "🧠", "🩺", "🫀", "🧬", "💊", "🦴", "👁️", "🧪", "📖", "⭐", "🎯", "💡", "📝", "🎓"];
