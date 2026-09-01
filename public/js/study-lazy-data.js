@@ -2,17 +2,17 @@
   if (window.__oitucardsStudyLazyData) return;
   window.__oitucardsStudyLazyData = true;
 
-  const PREFETCH_SEQUENTIAL = 8;
-  const PREFETCH_SAMPLED = 8;
   const cache = new Map();
   const inflight = new Map();
   let wrappedFunction = null;
-  let previousFunction = null;
+  let ratingReplay = false;
+  let keyReplay = false;
 
-  function isStudyRequest() {
-    if (document.querySelector("#studyConfigView.active,#studyView.active,#multiStudyConfigView.active,#multiStudyView.active")) return true;
+  function requestKind() {
     const stack = String(new Error().stack || "");
-    return /(?:study-next|multi-study)\.js/i.test(stack);
+    if (/multi-study\.js/i.test(stack) || document.querySelector("#multiStudyConfigView.active,#multiStudyView.active")) return "multi";
+    if (/study-next\.js/i.test(stack) || document.querySelector("#studyConfigView.active,#studyView.active")) return "single";
+    return null;
   }
 
   function reviewCount(card) {
@@ -35,15 +35,15 @@
     return { ...card, nextReviewAt: new Date(endTime + 1000).toISOString() };
   }
 
+  function escapeRegExp(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
   function cleanFront(value, id) {
     return String(value || "")
       .replace(new RegExp(`^<!--oc-promote-card:${escapeRegExp(id)}-->`), "")
       .replace(new RegExp(`^<!--oc-card:${escapeRegExp(id)}-->`), "")
       .replace(new RegExp(`^<!--oc-lazy-front:${escapeRegExp(id)}-->`), "");
-  }
-
-  function escapeRegExp(value) {
-    return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   function markerFront(id, html) {
@@ -60,6 +60,13 @@
 
   function fullContent(id) {
     return cache.get(id) || null;
+  }
+
+  function currentCardId() {
+    const root = document.querySelector("#studyView.active #studyFront,#multiStudyView.active #multiFront");
+    const html = String(root?.innerHTML || "");
+    return html.match(/<!--oc-promote-card:([^>]+)-->/)?.[1] ||
+      html.match(/<!--oc-card:([^>]+)-->/)?.[1] || null;
   }
 
   function updateMounted(id, full) {
@@ -158,19 +165,18 @@
     return card;
   }
 
-  function prefetch(cards) {
+  function prefetch(cards, kind) {
+    if (kind !== "single") return;
     const ids = [];
-    cards.slice(0, PREFETCH_SEQUENTIAL).forEach((card) => ids.push(card.id));
-    if (cards.length > PREFETCH_SEQUENTIAL) {
-      const step = Math.max(1, Math.floor(cards.length / PREFETCH_SAMPLED));
-      for (let i = step - 1; i < cards.length && ids.length < PREFETCH_SEQUENTIAL + PREFETCH_SAMPLED; i += step) {
-        ids.push(cards[i].id);
-      }
+    cards.slice(0, 10).forEach((card) => ids.push(card.id));
+    if (cards.length > 20) {
+      const step = Math.max(1, Math.floor(cards.length / 6));
+      for (let i = step - 1; i < cards.length && ids.length < 16; i += step) ids.push(cards[i].id);
     }
     [...new Set(ids)].forEach((id) => loadFullCard(id).catch(() => {}));
   }
 
-  async function studyCardsByDeck(deckId) {
+  async function studyCardsByDeck(deckId, baseReader, kind) {
     let metas = [];
     try {
       metas = await OituDB.getCardMetasByDeck?.(deckId) || [];
@@ -180,12 +186,12 @@
 
     if (!metas.length) {
       // Compatibilidade para bases antigas enquanto o índice leve é reconstruído uma única vez.
-      const full = await previousFunction(deckId);
+      const full = await baseReader(deckId);
       return Array.isArray(full) ? full : [];
     }
 
     const cards = metas.map(makeLazyCard);
-    prefetch(cards);
+    prefetch(cards, kind);
     return cards;
   }
 
@@ -194,10 +200,11 @@
     const current = OituDB.getCardsByDeck;
     if (current === wrappedFunction) return true;
 
-    previousFunction = current.bind(OituDB);
+    const baseReader = current.bind(OituDB);
     const wrapped = async function (deckId, ...args) {
-      if (!isStudyRequest()) return previousFunction(deckId, ...args);
-      return studyCardsByDeck(deckId);
+      const kind = requestKind();
+      if (!kind) return baseReader(deckId, ...args);
+      return studyCardsByDeck(deckId, baseReader, kind);
     };
     wrapped.__oitucardsStudyLazyData = true;
     wrappedFunction = wrapped;
@@ -215,10 +222,58 @@
     ids.slice(0, cache.size - 120).forEach((id) => cache.delete(id));
   }
 
+  async function ensureCurrentLoaded() {
+    const id = currentCardId();
+    if (!id || cache.has(id)) return true;
+    await loadFullCard(id);
+    return cache.has(id);
+  }
+
   document.addEventListener("click", (event) => {
     if (event.target.closest("#homeButton,#studyHomeButton,#multiHome,#exitStudyButton,#multiExit")) {
       setTimeout(clearOldCache, 0);
     }
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    if (ratingReplay) return;
+    const button = event.target.closest("[data-rating],[data-multi-rating]");
+    if (!button || (!document.querySelector("#studyView.active") && !document.querySelector("#multiStudyView.active"))) return;
+    const id = currentCardId();
+    if (!id || cache.has(id)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ensureCurrentLoaded().then((loaded) => {
+      if (!loaded || !button.isConnected) return;
+      ratingReplay = true;
+      try { button.click(); }
+      finally { ratingReplay = false; }
+    }).catch(() => {});
+  }, true);
+
+  document.addEventListener("keydown", (event) => {
+    if (keyReplay || !["0", "1", "2", "3", "4"].includes(event.key)) return;
+    if (!document.querySelector("#studyView.active,#multiStudyView.active")) return;
+    const id = currentCardId();
+    if (!id || cache.has(id)) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ensureCurrentLoaded().then((loaded) => {
+      if (!loaded) return;
+      keyReplay = true;
+      try {
+        document.dispatchEvent(new KeyboardEvent("keydown", {
+          key: event.key,
+          code: event.code,
+          bubbles: true,
+          cancelable: true
+        }));
+      } finally {
+        keyReplay = false;
+      }
+    }).catch(() => {});
   }, true);
 
   if (document.readyState === "loading") {
