@@ -62,6 +62,13 @@
     state.currentDeckId = null;
     showView("home");
 
+    // A biblioteca com pastas é a interface final. Quando ela já está instalada,
+    // evita desenhar a lista legada por um frame para substituí-la logo depois.
+    if (window.OituLibrary?.render && $("#createFolderButton")) {
+      await window.OituLibrary.render();
+      return;
+    }
+
     const decks = await OituDB.getDecks();
     const list = $("#deckList");
     const empty = $("#emptyState");
