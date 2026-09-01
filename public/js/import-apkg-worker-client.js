@@ -4,7 +4,12 @@
 
   const WORKER_URL = "js/import-apkg-worker.js?v=20260901-1905";
   const STATS_KEY = "OituCardsDeckStatsV3";
-  const DECK_CONCURRENCY = 6;
+  const AUTHORITY_KEY = "OituCardsReviewTimeAuthorityV1";
+  const MODEL_STORAGE_KEY = "OituCardsReviewPresetsV1";
+  const MODEL_PROFILE_STORAGE_KEY = "OituCardsReviewPresetUnitsV2";
+  const LEGACY_MODEL_UNIT_STORAGE_KEY = "OituCardsReviewPresetUnitsV1";
+  const GLOBAL_MODEL_KEY = "OituCardsGlobalReviewModelV1";
+  const DAY = "days";
 
   let worker = null;
   let workerReady = false;
@@ -66,8 +71,7 @@
   }
 
   function updateMediaIndicator(text) {
-    const element = ensureMediaIndicator();
-    element.textContent = text;
+    ensureMediaIndicator().textContent = text;
   }
 
   function finishMediaIndicator(text) {
@@ -91,35 +95,101 @@
     if (worker) return worker;
     worker = new Worker(WORKER_URL);
     worker.addEventListener("message", handleWorkerMessage);
-    worker.addEventListener("error", (event) => {
-      failJob(event?.message || "Falha no motor de importação em segundo plano.");
-    });
+    worker.addEventListener("error", (event) => failJob(event?.message || "Falha no motor de importação em segundo plano."));
     worker.postMessage({ type: "warmup" });
     return worker;
   }
 
-  function normalizeName(value) {
-    return String(value || "").trim().toLocaleLowerCase("pt-BR");
+  function readJson(key, fallback) {
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || "");
+      return value ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
   }
 
-  async function createFolderPath(parts, folders, cache) {
-    let parentId = null;
-    for (const raw of parts) {
-      const name = String(raw || "").trim().slice(0, 120);
-      if (!name) continue;
-      const key = `${parentId || "root"}\u0000${normalizeName(name)}`;
-      let folder = cache.get(key);
-      if (!folder) {
-        folder = folders.find((item) => (item.parentId || null) === parentId && normalizeName(item.name) === normalizeName(name));
-      }
-      if (!folder) {
-        folder = await OituDB.addFolder(name, parentId);
-        folders.push(folder);
-      }
-      cache.set(key, folder);
-      parentId = folder.id;
+  function normalizeUnit(value) {
+    const raw = String(value || "").toLocaleLowerCase("pt-BR");
+    if (["minutes", "minute", "minuto", "minutos", "min"].includes(raw)) return "minutes";
+    if (["hours", "hour", "hora", "horas", "h"].includes(raw)) return "hours";
+    return DAY;
+  }
+
+  function cloneReviewSettings(raw, profile) {
+    const source = raw || {};
+    const intervals = source.newIntervals || source || {};
+    const multipliers = source.multipliers || {};
+    const safeProfile = profile || { hard: DAY, medium: DAY, good: DAY, easy: DAY, max: DAY };
+    const max = Math.round(Number(source.maxIntervalDays));
+    const next = {
+      newIntervals: {
+        hard: Math.max(1, Math.round(Number(intervals.hard) || 1)),
+        medium: Math.max(1, Math.round(Number(intervals.medium) || 2)),
+        good: Math.max(1, Math.round(Number(intervals.good) || 4)),
+        easy: Math.max(1, Math.round(Number(intervals.easy) || 7))
+      },
+      multipliers: {
+        hard: Math.max(1, Number(multipliers.hard) || 1.2),
+        medium: Math.max(1, Number(multipliers.medium) || 1.8),
+        good: Math.max(1, Number(multipliers.good) || 2.5),
+        easy: Math.max(1, Number(multipliers.easy) || 4)
+      },
+      maxIntervalDays: Number.isFinite(max) && max >= 1 ? max : 180,
+      intervalUnits: {
+        hard: normalizeUnit(safeProfile.hard),
+        medium: normalizeUnit(safeProfile.medium),
+        good: normalizeUnit(safeProfile.good),
+        easy: normalizeUnit(safeProfile.easy)
+      },
+      maxIntervalUnit: normalizeUnit(safeProfile.max)
+    };
+    const units = [next.intervalUnits.hard, next.intervalUnits.medium, next.intervalUnits.good, next.intervalUnits.easy, next.maxIntervalUnit];
+    if (units.every((unit) => unit === units[0])) next.intervalUnit = units[0];
+    return next;
+  }
+
+  function globalReviewSnapshot() {
+    const models = readJson(MODEL_STORAGE_KEY, []);
+    const validModels = Array.isArray(models) ? models.filter((model) => model?.id && model?.settings) : [];
+    let modelId = String(localStorage.getItem(GLOBAL_MODEL_KEY) || "system");
+    if (modelId !== "system") {
+      const id = modelId.startsWith("model:") ? modelId.slice(6) : "";
+      if (!id || !validModels.some((model) => model.id === id)) modelId = "system";
     }
-    return parentId;
+
+    if (modelId === "system") {
+      return {
+        modelId,
+        settings: cloneReviewSettings({
+          newIntervals: { hard: 1, medium: 2, good: 4, easy: 7 },
+          multipliers: { hard: 1.2, medium: 1.8, good: 2.5, easy: 4 },
+          maxIntervalDays: 180
+        }, { hard: DAY, medium: DAY, good: DAY, easy: DAY, max: DAY })
+      };
+    }
+
+    const id = modelId.slice(6);
+    const model = validModels.find((item) => item.id === id);
+    const inline = model?.settings?.intervalUnits || {};
+    const profiles = readJson(MODEL_PROFILE_STORAGE_KEY, {});
+    const stored = profiles && typeof profiles === "object" && !Array.isArray(profiles) ? profiles[id] : null;
+    const legacyMap = readJson(LEGACY_MODEL_UNIT_STORAGE_KEY, {});
+    const legacyStored = legacyMap && typeof legacyMap === "object" && !Array.isArray(legacyMap) ? legacyMap[id] : null;
+    const legacyInline = model?.settings?.intervalUnit ? normalizeUnit(model.settings.intervalUnit) : null;
+    const fallback = legacyStored ? normalizeUnit(legacyStored) : DAY;
+    const profile = {
+      hard: normalizeUnit(inline.hard || stored?.hard || legacyInline || fallback),
+      medium: normalizeUnit(inline.medium || stored?.medium || legacyInline || fallback),
+      good: normalizeUnit(inline.good || stored?.good || legacyInline || fallback),
+      easy: normalizeUnit(inline.easy || stored?.easy || legacyInline || fallback),
+      max: normalizeUnit(model?.settings?.maxIntervalUnit || stored?.max || legacyInline || fallback)
+    };
+    return { modelId, settings: cloneReviewSettings(model?.settings, profile) };
+  }
+
+  function normalizeName(value) {
+    return String(value || "").trim().toLocaleLowerCase("pt-BR");
   }
 
   function uniqueDeckName(base, used) {
@@ -134,41 +204,110 @@
     return value;
   }
 
-  async function runLimited(items, limit, task) {
-    let cursor = 0;
-    async function runner() {
-      while (true) {
-        const index = cursor++;
-        if (index >= items.length) return;
-        await task(items[index], index);
+  function rememberAuthorityBatch(records, snapshot) {
+    try {
+      const parsed = readJson(AUTHORITY_KEY, {});
+      const authority = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      const updatedAt = new Date().toISOString();
+      for (const record of records) {
+        authority[record.id] = {
+          reviewSettings: snapshot.settings,
+          reviewModelMode: "global",
+          reviewModelId: snapshot.modelId,
+          updatedAt
+        };
       }
-    }
-    await Promise.all(Array.from({ length: Math.min(limit, items.length || 1) }, () => runner()));
+      localStorage.setItem(AUTHORITY_KEY, JSON.stringify(authority));
+    } catch (_) {}
   }
 
-  async function setupDecks(structure) {
-    const [existingDecks, folders] = await Promise.all([OituDB.getDecks(), OituDB.getFolders()]);
-    const used = new Set(existingDecks.map((deck) => normalizeName(deck.name)));
-    const folderCache = new Map();
-    const plans = [];
+  async function setupDecksBulk(structure, job) {
+    setProgress(10, `Preparando estrutura de ${structure.decks?.length || 0} baralhos...`);
+    const existing = await OituDB.getDecks();
+    const existingFolders = await OituDB.getFolders();
+    const usedDeckNames = new Set(existing.map((deck) => normalizeName(deck.name)));
+    const snapshot = globalReviewSnapshot();
+    const createdAtBase = Date.now();
+    const newFolders = [];
+    const newDecks = [];
+    const folderByPath = new Map();
+    const existingByParentName = new Map();
 
-    for (const source of structure.decks || []) {
-      const parts = String(source.name || "Baralho importado").split("::").map((part) => part.trim()).filter(Boolean);
-      const leafBase = parts.pop() || "Baralho importado";
-      const folderId = parts.length ? await createFolderPath(parts, folders, folderCache) : null;
-      plans.push({ did: String(source.did), folderId, name: uniqueDeckName(leafBase, used) });
+    for (const folder of existingFolders) {
+      existingByParentName.set(`${folder.parentId || "root"}\u0000${normalizeName(folder.name)}`, folder);
     }
 
-    const map = new Map();
-    let created = 0;
-    await runLimited(plans, DECK_CONCURRENCY, async (plan) => {
-      let deck = await OituDB.addDeck(plan.name);
-      if (plan.folderId) deck = await OituDB.updateDeck(deck.id, { folderId: plan.folderId });
-      map.set(plan.did, deck);
-      created += 1;
-      setProgress(10 + (created / Math.max(1, plans.length)) * 10, `Criando estrutura: ${created}/${plans.length}`);
-    });
-    return map;
+    function ensureFolderPath(parts) {
+      let parentId = null;
+      let pathKey = "";
+      for (const raw of parts) {
+        const name = String(raw || "").trim().slice(0, 120);
+        if (!name) continue;
+        pathKey += `/${normalizeName(name)}`;
+        let folder = folderByPath.get(pathKey);
+        if (!folder) folder = existingByParentName.get(`${parentId || "root"}\u0000${normalizeName(name)}`);
+        if (!folder) {
+          const now = new Date(createdAtBase + newFolders.length).toISOString();
+          folder = {
+            id: crypto.randomUUID(),
+            kind: "folder",
+            name,
+            parentId,
+            reviewSettings: structuredClone(snapshot.settings),
+            reviewModelMode: "global",
+            reviewModelId: snapshot.modelId,
+            createdAt: now,
+            updatedAt: now
+          };
+          newFolders.push(folder);
+          existingByParentName.set(`${parentId || "root"}\u0000${normalizeName(name)}`, folder);
+        }
+        folderByPath.set(pathKey, folder);
+        parentId = folder.id;
+      }
+      return parentId;
+    }
+
+    const deckMap = new Map();
+    for (const source of structure.decks || []) {
+      const parts = String(source.name || "Baralho importado").split("::").map((part) => part.trim()).filter(Boolean);
+      const leaf = uniqueDeckName(parts.pop() || "Baralho importado", usedDeckNames);
+      const folderId = parts.length ? ensureFolderPath(parts) : null;
+      const now = new Date(createdAtBase + newFolders.length + newDecks.length + 1).toISOString();
+      const deck = {
+        id: crypto.randomUUID(),
+        kind: "deck",
+        name: leaf,
+        folderId,
+        reviewSettings: structuredClone(snapshot.settings),
+        reviewModelMode: "global",
+        reviewModelId: snapshot.modelId,
+        importedAt: now,
+        importSource: extensionOf(job.file.name) || "apkg",
+        createdAt: now,
+        updatedAt: now
+      };
+      newDecks.push(deck);
+      deckMap.set(String(source.did), deck);
+    }
+
+    const records = [...newFolders, ...newDecks];
+    if (records.length) {
+      const db = await OituDB.openDB();
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("decks", "readwrite");
+        const store = tx.objectStore("decks");
+        for (const record of records) store.add(record);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error("Falha ao gravar a estrutura importada."));
+      });
+      rememberAuthorityBatch(records, snapshot);
+      window.OituLibraryEntitySnapshot?.invalidate?.();
+    }
+
+    setProgress(20, `Estrutura pronta: ${newDecks.length} baralhos. Preparando cards...`);
+    return deckMap;
   }
 
   async function persistCardBatch(job, cards) {
@@ -191,7 +330,8 @@
       const store = tx.objectStore("cards");
       const base = Date.now() + sequenceStart;
       const updatedAt = new Date().toISOString();
-      valid.forEach((card, local) => {
+      for (let local = 0; local < valid.length; local += 1) {
+        const card = valid[local];
         store.add({
           id: crypto.randomUUID(),
           deckId: card.deckId,
@@ -201,7 +341,7 @@
           createdAt: new Date(base + local).toISOString(),
           updatedAt
         });
-      });
+      }
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Falha ao gravar cards."));
@@ -209,9 +349,7 @@
 
     job.sequence += valid.length;
     job.persistedCards += valid.length;
-    for (const [deckId, amount] of increments) {
-      job.countByDeck.set(deckId, (job.countByDeck.get(deckId) || 0) + amount);
-    }
+    for (const [deckId, amount] of increments) job.countByDeck.set(deckId, (job.countByDeck.get(deckId) || 0) + amount);
     return valid.length;
   }
 
@@ -220,9 +358,7 @@
       const parsed = JSON.parse(localStorage.getItem(STATS_KEY) || "{}");
       const out = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
       const now = Date.now();
-      for (const [deckId, total] of countByDeck) {
-        out[deckId] = { total, studied: 0, due: 0, nextFutureAt: null, updatedAt: now };
-      }
+      for (const [deckId, total] of countByDeck) out[deckId] = { total, studied: 0, due: 0, nextFutureAt: null, updatedAt: now };
       localStorage.setItem(STATS_KEY, JSON.stringify(out));
     } catch (_) {}
   }
@@ -230,7 +366,7 @@
   function hydrateVisibleMedia() {
     const hydrate = window.OituScaleStorage?.hydrateElement;
     if (typeof hydrate !== "function") return;
-    ["studyFront","studyBack","multiFront","multiBack","frontEditor","backEditor"].forEach((id) => {
+    ["studyFront", "studyBack", "multiFront", "multiBack", "frontEditor", "backEditor"].forEach((id) => {
       const root = document.getElementById(id);
       if (root) Promise.resolve(hydrate(root)).catch(() => {});
     });
@@ -239,29 +375,17 @@
   async function finalizeCardsReady(job, message) {
     if (!job || job.cardsUiReleased) return;
     await job.persistChain;
-    const deckMap = await job.deckSetupPromise;
-
+    await job.deckSetupPromise;
     if (job.persistedCards !== job.receivedCards) {
       throw new Error(`Persistência incompleta: ${job.persistedCards}/${job.receivedCards} cards gravados.`);
     }
-
     job.cardsUiReleased = true;
     persistFreshStats(job.countByDeck);
-
-    const importedAt = new Date().toISOString();
-    Promise.all([...deckMap.values()].map((deck) => OituDB.updateDeck(deck.id, {
-      importedAt,
-      importSource: extensionOf(job.file.name) || "apkg"
-    }))).catch(() => {});
-
     setProgress(92, `${job.persistedCards} cards prontos. ${message.mediaCount || 0} imagens serão finalizadas sem bloquear o estudo.`, "success");
     setImportUiBusy(false);
     closeImportModal();
     refreshHome();
-
-    if (Number(message.mediaCount) > 0) {
-      updateMediaIndicator(`Cards prontos para estudar. Finalizando ${message.mediaCount} imagens em segundo plano…`);
-    }
+    if (Number(message.mediaCount) > 0) updateMediaIndicator(`Cards prontos para estudar. Finalizando ${message.mediaCount} imagens em segundo plano…`);
   }
 
   async function writeMediaBatch(records, imported, total) {
@@ -297,8 +421,9 @@
     if (!activeJob) return;
 
     if (message.type === "structure") {
-      activeJob.totalCards = Number(message.cardCount) || 0;
-      activeJob.deckSetupPromise = setupDecks(message).catch((error) => {
+      const job = activeJob;
+      job.totalCards = Number(message.cardCount) || 0;
+      job.deckSetupPromise = setupDecksBulk(message, job).catch((error) => {
         failJob(error?.message || "Não foi possível criar a estrutura de baralhos.");
         throw error;
       });
@@ -337,10 +462,7 @@
 
     if (message.type === "mediaBatch") {
       const job = activeJob;
-      const records = message.records || [];
-      job.mediaWriteChain = job.mediaWriteChain
-        .then(() => writeMediaBatch(records, message.imported, message.total))
-        .catch(() => {});
+      job.mediaWriteChain = job.mediaWriteChain.then(() => writeMediaBatch(message.records || [], message.imported, message.total)).catch(() => {});
       return;
     }
 
@@ -354,13 +476,9 @@
       Promise.all([job.cardsReadyPromise, job.persistChain, job.mediaWriteChain, job.deckSetupPromise]).then(() => {
         if (!job.cardsUiReleased) return;
         hydrateVisibleMedia();
-        if (message.warnings) {
-          finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas; ${message.warnings} não puderam ser importadas.`);
-        } else if (message.imported) {
-          finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas.`);
-        } else {
-          finishMediaIndicator(`Importação concluída. ${job.persistedCards} cards prontos para estudar.`);
-        }
+        if (message.warnings) finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas; ${message.warnings} não puderam ser importadas.`);
+        else if (message.imported) finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas.`);
+        else finishMediaIndicator(`Importação concluída. ${job.persistedCards} cards prontos para estudar.`);
         if (activeJob === job) activeJob = null;
       }).catch(() => {});
       return;
@@ -396,8 +514,7 @@
   window.addEventListener("change", (event) => {
     const input = event.target?.closest?.("#deckImportFileInput");
     const file = input?.files?.[0];
-    if (!isApkg(file)) return;
-    ensureWorker();
+    if (isApkg(file)) ensureWorker();
   }, true);
 
   window.addEventListener("click", (event) => {
