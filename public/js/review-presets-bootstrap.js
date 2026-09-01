@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-review-system-stabilizer]')) return;
     const stabilizer = document.createElement("script");
     stabilizer.async = false;
-    stabilizer.src = "js/review-system-stabilizer.js?v=20260831-2355";
+    stabilizer.src = "js/review-system-stabilizer.js?v=20260831-2205";
     stabilizer.dataset.oitucardsReviewSystemStabilizer = "true";
     stabilizer.onerror = () => console.error("Não foi possível carregar a estabilização final do sistema de revisão.");
     document.body.appendChild(stabilizer);
