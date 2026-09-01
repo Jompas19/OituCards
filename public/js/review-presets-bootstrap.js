@@ -6,7 +6,7 @@
     if (document.querySelector('script[data-oitucards-folder-review-unit-fix]')) return;
     const fix = document.createElement("script");
     fix.async = false;
-    fix.src = "js/folder-review-unit-fix.js?v=20260831-2145";
+    fix.src = "js/folder-review-unit-fix.js?v=20260831-2225";
     fix.dataset.oitucardsFolderReviewUnitFix = "true";
     fix.onerror = () => console.error("Não foi possível carregar a correção das unidades herdadas da pasta.");
     document.body.appendChild(fix);
