@@ -125,14 +125,12 @@
     }
     loadScript(
       'script[data-oitucards-review-final-authority]',
-      "js/review-final-authority.js?v=20260901-0115",
+      "js/review-final-authority.js?v=20260901-0125",
       "oitucardsReviewFinalAuthority",
       "Não foi possível carregar a autoridade final do sistema de revisão."
     );
   }
 
-  // Executa de forma síncrona neste script estático, antes de import.js/library.js.
-  // Assim o primeiro render já recebe a data efetiva correta para minutos e horas.
   installImmediateExactDueRead();
   document.documentElement.classList.add("review-due-ready");
 
