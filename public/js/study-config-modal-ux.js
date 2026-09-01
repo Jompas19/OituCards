@@ -16,6 +16,7 @@
   ];
 
   let lastSourceViewId = "homeView";
+  let lastSourceScrollY = 0;
   const installed = new Set();
 
   function activeSourceView() {
@@ -26,7 +27,10 @@
 
   function rememberSource() {
     const source = activeSourceView();
-    if (source?.id) lastSourceViewId = source.id;
+    if (source?.id) {
+      lastSourceViewId = source.id;
+      lastSourceScrollY = window.scrollY || 0;
+    }
   }
 
   function ensureCloseButton(config, view) {
@@ -49,6 +53,7 @@
       if (source && source !== view) {
         source.classList.add("active", "study-config-underlay-view");
         view.dataset.studyConfigSource = source.id;
+        window.scrollTo({ top: lastSourceScrollY, behavior: "instant" });
       }
       view.classList.add("study-config-modal-view");
       document.body.classList.add("study-config-modal-open");
@@ -62,6 +67,11 @@
     const sourceId = view.dataset.studyConfigSource;
     if (sourceId) document.getElementById(sourceId)?.classList.remove("study-config-underlay-view");
     delete view.dataset.studyConfigSource;
+
+    const currentSource = activeSourceView();
+    if (sourceId && currentSource?.id === sourceId) {
+      requestAnimationFrame(() => window.scrollTo({ top: lastSourceScrollY, behavior: "instant" }));
+    }
 
     if (!CONFIGS.some((item) => document.getElementById(item.viewId)?.classList.contains("active"))) {
       document.body.classList.remove("study-config-modal-open");
