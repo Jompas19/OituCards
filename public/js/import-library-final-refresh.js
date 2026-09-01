@@ -2,11 +2,7 @@
   if (window.__oitucardsImportLibraryFinalRefresh) return;
   window.__oitucardsImportLibraryFinalRefresh = true;
 
-  const state = {
-    statusObserver: null,
-    successHandled: false
-  };
-
+  const state = { statusObserver: null, successHandled: false };
   const $ = (selector) => document.querySelector(selector);
 
   function loadDirectDeleteActions() {
@@ -24,12 +20,10 @@
   }
 
   function renderFreshLibrary() {
-    [0, 180].forEach((delay) => {
-      setTimeout(() => {
-        Promise.resolve(window.OituLibrary?.render?.()).catch((error) => {
-          console.warn("OituCards: atualização da biblioteca após importação falhou.", error);
-        });
-      }, delay);
+    requestAnimationFrame(() => {
+      Promise.resolve(window.OituLibrary?.render?.()).catch((error) => {
+        console.warn("OituCards: atualização da biblioteca após importação falhou.", error);
+      });
     });
   }
 
@@ -37,16 +31,12 @@
     const status = $("#importStatus");
     if (!status) return;
     const text = String(status.textContent || "").trim();
-
     if (!isImportSuccess(text)) {
       state.successHandled = false;
       return;
     }
     if (state.successHandled) return;
     state.successHandled = true;
-
-    // A importação já espelha as gravações para o índice leve de cards.
-    // Atualizar a biblioteca não precisa mais ler cards completos nem imagens.
     renderFreshLibrary();
   }
 
