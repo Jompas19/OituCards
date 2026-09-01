@@ -152,7 +152,6 @@
     const folderCache = new Map();
     const plans = [];
 
-    // Primeiro cria apenas os caminhos de pasta únicos.
     for (const source of structure.decks || []) {
       const parts = String(source.name || "Baralho importado").split("::").map((part) => part.trim()).filter(Boolean);
       const leafBase = parts.pop() || "Baralho importado";
@@ -172,42 +171,48 @@
     return map;
   }
 
-  async function persistCardBatch(cards) {
-    const job = activeJob;
-    if (!job) return;
+  async function persistCardBatch(job, cards) {
+    if (!job) return 0;
     const deckMap = await job.deckSetupPromise;
     const valid = [];
+    const increments = new Map();
     for (const card of cards || []) {
       const deck = deckMap.get(String(card.did));
       if (!deck) continue;
       valid.push({ deckId: deck.id, frontHtml: card.frontHtml, backHtml: card.backHtml });
+      increments.set(deck.id, (increments.get(deck.id) || 0) + 1);
     }
-    if (!valid.length) return;
+    if (!valid.length) return 0;
 
     const db = await OituDB.openDB();
+    const sequenceStart = job.sequence;
     await new Promise((resolve, reject) => {
       const tx = db.transaction("cards", "readwrite");
       const store = tx.objectStore("cards");
-      const base = Date.now() + job.sequence;
+      const base = Date.now() + sequenceStart;
       const updatedAt = new Date().toISOString();
       valid.forEach((card, local) => {
-        const createdAt = new Date(base + local).toISOString();
         store.add({
           id: crypto.randomUUID(),
           deckId: card.deckId,
           frontHtml: card.frontHtml,
           backHtml: card.backHtml,
           reviewStatus: null,
-          createdAt,
+          createdAt: new Date(base + local).toISOString(),
           updatedAt
         });
-        job.countByDeck.set(card.deckId, (job.countByDeck.get(card.deckId) || 0) + 1);
       });
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Falha ao gravar cards."));
     });
+
     job.sequence += valid.length;
+    job.persistedCards += valid.length;
+    for (const [deckId, amount] of increments) {
+      job.countByDeck.set(deckId, (job.countByDeck.get(deckId) || 0) + amount);
+    }
+    return valid.length;
   }
 
   function persistFreshStats(countByDeck) {
@@ -231,11 +236,15 @@
     });
   }
 
-  async function finalizeCardsReady(message) {
-    const job = activeJob;
+  async function finalizeCardsReady(job, message) {
     if (!job || job.cardsUiReleased) return;
     await job.persistChain;
     const deckMap = await job.deckSetupPromise;
+
+    if (job.persistedCards !== job.receivedCards) {
+      throw new Error(`Persistência incompleta: ${job.persistedCards}/${job.receivedCards} cards gravados.`);
+    }
+
     job.cardsUiReleased = true;
     persistFreshStats(job.countByDeck);
 
@@ -245,16 +254,13 @@
       importSource: extensionOf(job.file.name) || "apkg"
     }))).catch(() => {});
 
-    setProgress(92, `Cards prontos. ${message.mediaCount || 0} imagens serão finalizadas sem bloquear o estudo.`, "success");
+    setProgress(92, `${job.persistedCards} cards prontos. ${message.mediaCount || 0} imagens serão finalizadas sem bloquear o estudo.`, "success");
     setImportUiBusy(false);
     closeImportModal();
     refreshHome();
 
     if (Number(message.mediaCount) > 0) {
       updateMediaIndicator(`Cards prontos para estudar. Finalizando ${message.mediaCount} imagens em segundo plano…`);
-    } else {
-      finishMediaIndicator("Importação concluída. Cards prontos para estudar.");
-      activeJob = null;
     }
   }
 
@@ -300,8 +306,10 @@
     }
 
     if (message.type === "cardBatch") {
+      const job = activeJob;
       const cards = message.cards || [];
-      activeJob.persistChain = activeJob.persistChain.then(() => persistCardBatch(cards));
+      job.receivedCards += cards.length;
+      job.persistChain = job.persistChain.then(() => persistCardBatch(job, cards));
       const ratio = message.total ? Number(message.done || 0) / Number(message.total) : 0;
       setProgress(20 + ratio * 68, `Preparando e gravando cards: ${message.done || 0}/${message.total || 0}`);
       return;
@@ -314,7 +322,11 @@
     }
 
     if (message.type === "cardsDone") {
-      finalizeCardsReady(message).catch((error) => failJob(error?.message || "Falha ao finalizar os cards."));
+      const job = activeJob;
+      job.cardsReadyPromise = finalizeCardsReady(job, message).catch((error) => {
+        failJob(error?.message || "Falha ao finalizar os cards.");
+        throw error;
+      });
       return;
     }
 
@@ -324,8 +336,9 @@
     }
 
     if (message.type === "mediaBatch") {
+      const job = activeJob;
       const records = message.records || [];
-      activeJob.mediaWriteChain = activeJob.mediaWriteChain
+      job.mediaWriteChain = job.mediaWriteChain
         .then(() => writeMediaBatch(records, message.imported, message.total))
         .catch(() => {});
       return;
@@ -338,15 +351,18 @@
 
     if (message.type === "mediaDone") {
       const job = activeJob;
-      job.mediaWriteChain.then(() => {
+      Promise.all([job.cardsReadyPromise, job.persistChain, job.mediaWriteChain, job.deckSetupPromise]).then(() => {
+        if (!job.cardsUiReleased) return;
         hydrateVisibleMedia();
         if (message.warnings) {
           finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas; ${message.warnings} não puderam ser importadas.`);
-        } else {
+        } else if (message.imported) {
           finishMediaIndicator(`Importação concluída. ${message.imported || 0} imagens prontas.`);
+        } else {
+          finishMediaIndicator(`Importação concluída. ${job.persistedCards} cards prontos para estudar.`);
         }
-        activeJob = null;
-      });
+        if (activeJob === job) activeJob = null;
+      }).catch(() => {});
       return;
     }
 
@@ -365,9 +381,12 @@
       file,
       totalCards: 0,
       sequence: 0,
+      receivedCards: 0,
+      persistedCards: 0,
       countByDeck: new Map(),
       deckSetupPromise: Promise.resolve(new Map()),
       persistChain: Promise.resolve(),
+      cardsReadyPromise: Promise.resolve(),
       mediaWriteChain: Promise.resolve(),
       cardsUiReleased: false
     };
