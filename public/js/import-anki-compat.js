@@ -15,7 +15,8 @@
   const naturalCollator = typeof Intl?.Collator === "function"
     ? new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" })
     : null;
-  const MEDIA_BATCH_SIZE = 6;
+  const MEDIA_BATCH_SIZE = 8;
+  const MEDIA_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
   function limitDeckPathComponent(value) {
     const text = String(value || "").trim();
@@ -94,7 +95,7 @@
     const comma = source.indexOf(",");
     if (comma < 0) return null;
     const header = source.slice(0, comma);
-    const payload = source.slice(comma + 1);
+    const payload = source.slice(comma + 1).split("#", 1)[0];
     const mime = header.match(/^data:([^;,]+)/i)?.[1] || "application/octet-stream";
     try {
       const binary = /;base64/i.test(header) ? atob(payload) : decodeURIComponent(payload);
@@ -113,7 +114,7 @@
     importState.mediaFlushPromise = importState.mediaFlushPromise.then(async () => {
       while (importState.mediaQueue.length) {
         const jobs = importState.mediaQueue.splice(0, MEDIA_BATCH_SIZE);
-        const records = jobs.map((job) => dataUrlToMediaRecord(job.id, job.dataUrl)).filter(Boolean);
+        const records = jobs.map((job) => job.record || dataUrlToMediaRecord(job.id, job.dataUrl)).filter(Boolean);
         if (records.length && window.OituScaleStorage?.putMediaBatch) {
           await OituScaleStorage.putMediaBatch(records);
         }
@@ -143,6 +144,67 @@
     return id;
   }
 
+  function queueMediaBlob(blob) {
+    const id = `media:${crypto.randomUUID()}`;
+    importState.mediaQueue.push({
+      id,
+      record: {
+        id,
+        blob,
+        mime: blob.type || "application/octet-stream",
+        size: blob.size || 0,
+        createdAt: new Date().toISOString()
+      }
+    });
+    scheduleMediaFlush();
+    return id;
+  }
+
+  function directMediaId(dataUrl) {
+    const match = String(dataUrl || "").match(/#ocmedia=([^#&]+)/i);
+    if (!match) return null;
+    try { return decodeURIComponent(match[1]); }
+    catch (_) { return match[1]; }
+  }
+
+  function patchImageFileReader() {
+    const proto = window.FileReader?.prototype;
+    if (!proto?.readAsDataURL || proto.readAsDataURL.__oitucardsDirectMedia) return;
+    const originalReadAsDataUrl = proto.readAsDataURL;
+
+    function patchedReadAsDataUrl(blob) {
+      if (
+        importState.active &&
+        blob instanceof Blob &&
+        /^image\//i.test(String(blob.type || "")) &&
+        window.OituScaleStorage?.putMediaBatch
+      ) {
+        const id = queueMediaBlob(blob);
+        const syntheticResult = `${MEDIA_PLACEHOLDER}#ocmedia=${encodeURIComponent(id)}`;
+        try {
+          Object.defineProperty(this, "result", {
+            configurable: true,
+            enumerable: true,
+            get: () => syntheticResult
+          });
+          queueMicrotask(() => {
+            try { this.dispatchEvent(new ProgressEvent("load")); }
+            catch (_) { if (typeof this.onload === "function") this.onload(new Event("load")); }
+            try { this.dispatchEvent(new ProgressEvent("loadend")); } catch (_) {}
+          });
+          return;
+        } catch (_) {
+          // Se o navegador não permitir sombrear result, usa o caminho nativo.
+        }
+      }
+      return originalReadAsDataUrl.call(this, blob);
+    }
+
+    patchedReadAsDataUrl.__oitucardsDirectMedia = true;
+    patchedReadAsDataUrl.__oitucardsOriginal = originalReadAsDataUrl;
+    proto.readAsDataURL = patchedReadAsDataUrl;
+  }
+
   function externalizeImportedMedia(html) {
     const source = String(html || "");
     if (!importState.active || !window.OituScaleStorage?.putMediaBatch || !/data:image\//i.test(source)) return source;
@@ -152,7 +214,7 @@
     template.content.querySelectorAll("img[src^='data:image/']").forEach((image) => {
       const dataUrl = image.getAttribute("src") || "";
       if (!dataUrl) return;
-      const id = queueMediaDataUrl(dataUrl);
+      const id = directMediaId(dataUrl) || queueMediaDataUrl(dataUrl);
       image.setAttribute("data-oitucards-media", id);
       image.setAttribute("src", "");
       image.setAttribute("loading", "lazy");
@@ -253,6 +315,7 @@
     patchImportDeckSnapshot();
     patchFastImportSanitizer();
     patchMediaBarrier();
+    patchImageFileReader();
     attachImportStatusObserver();
   }
 
@@ -290,6 +353,7 @@
   patchNaturalLibraryOrdering();
   patchFastImportSanitizer();
   patchImportDeckSnapshot();
+  patchImageFileReader();
   installImportSessionHooks();
 
   if (window.JSZip) {
