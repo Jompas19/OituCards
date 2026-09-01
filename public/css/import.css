@@ -1,6 +1,17 @@
 @import url("review-presets.css?v=20260901-1515");
-@import url("visual-refinement.css?v=20260901-1515");
-@import url("visual-polish.css?v=20260901-1515");
+
+/* CSS crítico do primeiro frame: espelha o refinamento final sem esperar JS dinâmico. */
+.brand-button{height:48px;max-width:min(360px,58vw);min-width:138px;overflow:visible}
+.brand-official-logo{display:block;width:auto;height:46px;max-width:100%;object-fit:contain;object-position:left center;background:transparent;border:0}
+.brand-button:not(.brand-logo-ready) .brand-mark{display:grid!important}
+.brand-button:not(.brand-logo-ready) .brand-name{display:inline!important}
+.brand-button:not(.brand-logo-ready) .brand-official-logo{display:none!important}
+#deckList.deck-list{gap:8px}
+#deckList .deck-row,#deckList .library-tree-row{padding:12px 15px;gap:13px;border-radius:14px}
+#deckList .deck-name-button,#deckList .folder-toggle-button{font-weight:600;font-size:1rem;line-height:1.25}
+#deckList .deck-info,#deckList .folder-info{margin-top:5px;gap:9px;font-size:.82rem;font-weight:400}
+#deckList .progress-track{height:5px;margin-top:8px;max-width:310px}
+#deckList .folder-main{min-height:58px}
 
 .import-modal-panel{width:min(760px,calc(100vw - 32px));max-height:min(88vh,900px);overflow:auto;padding:24px;overflow-x:hidden}
 .import-lead{margin:7px 0 0;color:var(--muted);font-size:.9rem;line-height:1.5;max-width:620px}
@@ -39,6 +50,7 @@
 .import-status[data-tone="working"]{color:var(--text)}
 .imported-audio-placeholder{display:inline-block;padding:2px 6px;border-radius:6px;background:var(--surface-2);color:var(--muted);font-size:.82em}
 
+/* Modais com respiro real e quebra segura de texto. */
 .import-modal-panel .modal-header>div,
 .import-modal-panel .import-info-box,
 .import-modal-panel .import-deck-name-row,
@@ -54,6 +66,7 @@
 .review-unsaved-modal .modal-header{align-items:flex-start}
 .review-unsaved-copy{max-width:100%}
 
+/* Preparação de estudo como janela sobre a tela de origem. */
 body.study-config-modal-open{overflow:hidden!important}
 #studyConfigView.study-config-modal-view.active,
 #multiStudyConfigView.study-config-modal-view.active{
@@ -108,11 +121,6 @@ body.study-config-modal-open{overflow:hidden!important}
   z-index:2;
 }
 
-.brand-button{min-width:138px}
-.brand-button:not(.brand-logo-ready) .brand-mark{display:grid!important}
-.brand-button:not(.brand-logo-ready) .brand-name{display:inline!important}
-.brand-button:not(.brand-logo-ready) .brand-official-logo{display:none!important}
-
 @media(max-width:640px){
   .import-modal-panel{width:calc(100vw - 18px);max-height:92vh;padding:18px}
   .import-dropzone{min-height:145px;padding:20px 14px}
@@ -127,6 +135,9 @@ body.study-config-modal-open{overflow:hidden!important}
   #studyConfigView.study-config-modal-view .study-config-heading,
   #multiStudyConfigView.study-config-modal-view .study-config-heading{padding:19px 62px 14px 18px}
   .study-config-window-close{top:14px;right:14px}
-  .brand-button{min-width:120px}
+  .brand-button{height:42px;max-width:68vw;min-width:120px}
+  .brand-official-logo{height:40px}
+  #deckList .deck-row,#deckList .library-tree-row{padding:10px 11px;gap:9px}
+  #deckList .folder-main{min-height:56px}
 }
 @media(prefers-reduced-motion:reduce){.import-dropzone,.import-progress-bar{transition:none}}
