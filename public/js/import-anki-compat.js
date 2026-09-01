@@ -3,13 +3,19 @@
     active: false,
     deckSnapshotPromise: null,
     sanitizeCache: new Map(),
-    statusObserver: null
+    statusObserver: null,
+    mediaRefByDataUrl: new Map(),
+    mediaQueue: [],
+    mediaFlushPromise: Promise.resolve(),
+    mediaFlushScheduled: false,
+    mediaBarrierPatched: false
   };
 
   const BIDI_CONTROL_RE = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
   const naturalCollator = typeof Intl?.Collator === "function"
     ? new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" })
     : null;
+  const MEDIA_BATCH_SIZE = 6;
 
   function limitDeckPathComponent(value) {
     const text = String(value || "").trim();
@@ -83,6 +89,78 @@
     }
   }
 
+  function dataUrlToMediaRecord(id, dataUrl) {
+    const source = String(dataUrl || "");
+    const comma = source.indexOf(",");
+    if (comma < 0) return null;
+    const header = source.slice(0, comma);
+    const payload = source.slice(comma + 1);
+    const mime = header.match(/^data:([^;,]+)/i)?.[1] || "application/octet-stream";
+    try {
+      const binary = /;base64/i.test(header) ? atob(payload) : decodeURIComponent(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i) & 0xff;
+      const blob = new Blob([bytes], { type: mime });
+      return { id, blob, mime, size: blob.size, createdAt: new Date().toISOString() };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function scheduleMediaFlush() {
+    if (importState.mediaFlushScheduled || !importState.mediaQueue.length) return;
+    importState.mediaFlushScheduled = true;
+    importState.mediaFlushPromise = importState.mediaFlushPromise.then(async () => {
+      while (importState.mediaQueue.length) {
+        const jobs = importState.mediaQueue.splice(0, MEDIA_BATCH_SIZE);
+        const records = jobs.map((job) => dataUrlToMediaRecord(job.id, job.dataUrl)).filter(Boolean);
+        if (records.length && window.OituScaleStorage?.putMediaBatch) {
+          await OituScaleStorage.putMediaBatch(records);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }).finally(() => {
+      importState.mediaFlushScheduled = false;
+      if (importState.mediaQueue.length) scheduleMediaFlush();
+    });
+  }
+
+  async function flushAllMedia() {
+    while (importState.mediaQueue.length || importState.mediaFlushScheduled) {
+      scheduleMediaFlush();
+      await importState.mediaFlushPromise;
+    }
+  }
+
+  function queueMediaDataUrl(dataUrl) {
+    const source = String(dataUrl || "");
+    const cached = importState.mediaRefByDataUrl.get(source);
+    if (cached) return cached;
+    const id = `media:${crypto.randomUUID()}`;
+    importState.mediaRefByDataUrl.set(source, id);
+    importState.mediaQueue.push({ id, dataUrl: source });
+    scheduleMediaFlush();
+    return id;
+  }
+
+  function externalizeImportedMedia(html) {
+    const source = String(html || "");
+    if (!importState.active || !window.OituScaleStorage?.putMediaBatch || !/data:image\//i.test(source)) return source;
+    const template = document.createElement("template");
+    template.innerHTML = source;
+    let changed = false;
+    template.content.querySelectorAll("img[src^='data:image/']").forEach((image) => {
+      const dataUrl = image.getAttribute("src") || "";
+      if (!dataUrl) return;
+      const id = queueMediaDataUrl(dataUrl);
+      image.setAttribute("data-oitucards-media", id);
+      image.setAttribute("src", "");
+      image.setAttribute("loading", "lazy");
+      changed = true;
+    });
+    return changed ? template.innerHTML.trim() : source;
+  }
+
   function patchFastImportSanitizer() {
     if (!window.OituEditor?.sanitizeHtml || OituEditor.sanitizeHtml.__oitucardsImportFastPath) return;
 
@@ -101,7 +179,7 @@
         return importState.sanitizeCache.get(source);
       }
 
-      const sanitized = originalSanitizeHtml(source);
+      const sanitized = externalizeImportedMedia(originalSanitizeHtml(source));
       if (source.length <= 50000) {
         importState.sanitizeCache.set(source, sanitized);
         trimSanitizeCache();
@@ -131,10 +209,24 @@
     OituDB.getDecks = patched;
   }
 
+  function patchMediaBarrier() {
+    if (importState.mediaBarrierPatched || !window.OituDB?.addDeck) return;
+    importState.mediaBarrierPatched = true;
+    const originalAddDeck = OituDB.addDeck.bind(OituDB);
+    OituDB.addDeck = async function (...args) {
+      if (importState.active && (importState.mediaQueue.length || importState.mediaFlushScheduled)) {
+        await flushAllMedia();
+      }
+      return originalAddDeck(...args);
+    };
+  }
+
   function finishImportSession() {
     importState.active = false;
     importState.deckSnapshotPromise = null;
     importState.sanitizeCache.clear();
+    importState.mediaRefByDataUrl.clear();
+    importState.mediaQueue.length = 0;
   }
 
   function inspectImportStatus() {
@@ -156,8 +248,11 @@
     importState.active = true;
     importState.deckSnapshotPromise = null;
     importState.sanitizeCache.clear();
+    importState.mediaRefByDataUrl.clear();
+    importState.mediaQueue.length = 0;
     patchImportDeckSnapshot();
     patchFastImportSanitizer();
+    patchMediaBarrier();
     attachImportStatusObserver();
   }
 
