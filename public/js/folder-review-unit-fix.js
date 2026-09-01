@@ -1,14 +1,14 @@
 (function () {
-  if (window.__oitucardsFolderReviewUnitFix) return;
-  window.__oitucardsFolderReviewUnitFix = true;
+  if (window.__oitucardsFolderReviewUnitFixV2) return;
+  window.__oitucardsFolderReviewUnitFixV2 = true;
 
   const GLOBAL_MODEL_KEY = "OituCardsGlobalReviewModelV1";
   const MINUTE = "minutes";
   const HOUR = "hours";
   const DAY = "days";
   const RATINGS = ["hard", "medium", "good", "easy"];
-  let applyContext = null;
-  let dbPatched = false;
+  let activeFolderId = null;
+  let applying = false;
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -19,115 +19,232 @@
     return DAY;
   }
 
+  function toMinutes(value, unit) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return 0;
+    const safe = normalizeUnit(unit);
+    if (safe === MINUTE) return number;
+    if (safe === HOUR) return number * 60;
+    return number * 1440;
+  }
+
   function unitFor(field) {
     return normalizeUnit($(`select[data-review-time-scope="folder"][data-review-time-field="${field}"]`)?.value);
   }
 
-  function readProfile() {
-    return {
+  function roundedInput(input, unit) {
+    const raw = Number(input?.value);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    const safe = normalizeUnit(unit);
+    const value = safe === MINUTE
+      ? Math.max(5, Math.round(raw / 5) * 5)
+      : Math.max(1, Math.round(raw));
+    if (input && String(input.value) !== String(value)) input.value = String(value);
+    return value;
+  }
+
+  function readSettings() {
+    const profile = {
       hard: unitFor("hard"),
       medium: unitFor("medium"),
       good: unitFor("good"),
       easy: unitFor("easy"),
       max: unitFor("max")
     };
+
+    const ids = {
+      hard: "folderRevHardDays",
+      medium: "folderRevMediumDays",
+      good: "folderRevGoodDays",
+      easy: "folderRevEasyDays",
+      max: "folderRevMax"
+    };
+
+    const values = {};
+    for (const field of [...RATINGS, "max"]) {
+      values[field] = roundedInput($(`#${ids[field]}`), profile[field]);
+      if (!Number.isFinite(values[field])) return { error: "Preencha todos os intervalos com valores válidos." };
+    }
+
+    const maxMinutes = toMinutes(values.max, profile.max);
+    const exceedsMax = RATINGS.find((rating) => toMinutes(values[rating], profile[rating]) > maxMinutes);
+    if (exceedsMax) {
+      return { error: "O intervalo inicial de nenhuma resposta pode ultrapassar o intervalo máximo definido." };
+    }
+
+    const multipliers = {
+      hard: Number.parseFloat($("#folderRevHardMult")?.value),
+      medium: Number.parseFloat($("#folderRevMediumMult")?.value),
+      good: Number.parseFloat($("#folderRevGoodMult")?.value),
+      easy: Number.parseFloat($("#folderRevEasyMult")?.value)
+    };
+    if (RATINGS.some((rating) => !Number.isFinite(multipliers[rating]) || multipliers[rating] < 1 || multipliers[rating] > 10)) {
+      return { error: "Os multiplicadores devem ficar entre 1,0 e 10." };
+    }
+
+    const settings = {
+      newIntervals: {
+        hard: values.hard,
+        medium: values.medium,
+        good: values.good,
+        easy: values.easy
+      },
+      multipliers,
+      maxIntervalDays: values.max,
+      intervalUnits: {
+        hard: profile.hard,
+        medium: profile.medium,
+        good: profile.good,
+        easy: profile.easy
+      },
+      maxIntervalUnit: profile.max
+    };
+
+    const allUnits = [...RATINGS.map((rating) => profile[rating]), profile.max];
+    if (allUnits.every((unit) => unit === allUnits[0])) settings.intervalUnit = allUnits[0];
+
+    return { settings, profile };
   }
 
   function bindingForFolder() {
-    const selection = String($("#folderReviewModelSelect")?.value || "custom");
+    let selection = String($("#folderReviewModelSelect")?.value || "custom");
+    if (selection === "__create_review_model__") selection = "custom";
     if (selection === "global") {
       return {
-        mode: "global",
-        modelId: String(localStorage.getItem(GLOBAL_MODEL_KEY) || "system")
+        reviewModelMode: "global",
+        reviewModelId: String(localStorage.getItem(GLOBAL_MODEL_KEY) || "system")
       };
     }
-    if (selection === "custom" || selection === "__create_review_model__") {
-      return { mode: "manual", modelId: "custom" };
-    }
-    return { mode: "manual", modelId: selection };
-  }
-
-  function applicationActive() {
-    if (!applyContext || applyContext.expiresAt <= Date.now()) return false;
-    const modal = $("#folderReviewModal");
-    return Boolean(modal && !modal.classList.contains("hidden"));
-  }
-
-  function withUnits(settings, profile) {
-    const source = settings || {};
-    const safe = profile || readProfile();
-    const next = {
-      ...source,
-      newIntervals: { ...(source.newIntervals || {}) },
-      multipliers: { ...(source.multipliers || {}) },
-      intervalUnits: {
-        hard: normalizeUnit(safe.hard),
-        medium: normalizeUnit(safe.medium),
-        good: normalizeUnit(safe.good),
-        easy: normalizeUnit(safe.easy)
-      },
-      maxIntervalUnit: normalizeUnit(safe.max)
-    };
-
-    const all = [...RATINGS.map((rating) => next.intervalUnits[rating]), next.maxIntervalUnit];
-    if (all.every((unit) => unit === all[0])) next.intervalUnit = all[0];
-    else delete next.intervalUnit;
-    return next;
-  }
-
-  function enrichPatch(patch) {
-    if (!applicationActive() || !patch?.reviewSettings) return patch;
     return {
-      ...patch,
-      reviewSettings: withUnits(patch.reviewSettings, applyContext.profile),
-      reviewModelMode: applyContext.mode,
-      reviewModelId: applyContext.modelId
+      reviewModelMode: "manual",
+      reviewModelId: selection === "custom" ? "custom" : selection
     };
   }
 
-  function patchDatabase() {
-    if (dbPatched || !window.OituDB?.updateDeck || !window.OituDB?.updateFolder) return false;
-    dbPatched = true;
-
-    const previousUpdateDeck = OituDB.updateDeck.bind(OituDB);
-    const previousUpdateFolder = OituDB.updateFolder.bind(OituDB);
-
-    OituDB.updateDeck = function (id, patch) {
-      return previousUpdateDeck(id, enrichPatch(patch));
+  function cloneSettings(settings) {
+    return {
+      ...settings,
+      newIntervals: { ...settings.newIntervals },
+      multipliers: { ...settings.multipliers },
+      intervalUnits: { ...settings.intervalUnits }
     };
+  }
 
-    OituDB.updateFolder = function (id, patch) {
-      return previousUpdateFolder(id, enrichPatch(patch));
+  function descendantsOf(folderId, folders) {
+    const children = new Map();
+    for (const folder of folders) {
+      const parent = folder.parentId || null;
+      if (!children.has(parent)) children.set(parent, []);
+      children.get(parent).push(folder.id);
+    }
+    const result = [];
+    const visit = (id) => {
+      for (const childId of children.get(id) || []) {
+        result.push(childId);
+        visit(childId);
+      }
     };
+    visit(folderId);
+    return result;
+  }
+
+  function closeFolderReviewModal() {
+    const modal = $("#folderReviewModal");
+    modal?.classList.add("hidden");
+    if (!document.querySelector(".modal-backdrop:not(.hidden)")) document.body.style.overflow = "";
+  }
+
+  function showToast(message) {
+    const toast = $("#toast");
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.remove("hidden");
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => toast.classList.add("hidden"), 2600);
+  }
+
+  async function applyFolderSettings(folderId, settings) {
+    const [folder, folders, decks] = await Promise.all([
+      OituDB.getFolder(folderId),
+      OituDB.getFolders(),
+      OituDB.getDecks()
+    ]);
+    if (!folder) throw new Error("Pasta não encontrada.");
+
+    const folderIds = new Set([folderId, ...descendantsOf(folderId, folders)]);
+    const affectedDecks = decks.filter((deck) => folderIds.has(deck.folderId || null));
+    const subfolderCount = folderIds.size - 1;
+    const message = `Aplicar estas regras à pasta “${folder.name}”${subfolderCount ? `, a ${subfolderCount} ${subfolderCount === 1 ? "subpasta" : "subpastas"}` : ""} e a ${affectedDecks.length} ${affectedDecks.length === 1 ? "baralho" : "baralhos"}?\n\nOs ajustes de revisão atuais desses baralhos serão substituídos.`;
+    if (!window.confirm(message)) return false;
+
+    const binding = bindingForFolder();
+    const patchFor = () => ({
+      reviewSettings: cloneSettings(settings),
+      ...binding
+    });
+
+    // Sequencial de propósito: mantém o fluxo previsível com as camadas de compatibilidade do banco.
+    for (const id of folderIds) await OituDB.updateFolder(id, patchFor());
+    for (const deck of affectedDecks) await OituDB.updateDeck(deck.id, patchFor());
+
     return true;
   }
 
-  function prepareFolderApply(event) {
+  async function handleFolderSubmit(event) {
     if (event.target?.id !== "folderReviewForm") return;
-    const binding = bindingForFolder();
-    applyContext = {
-      profile: readProfile(),
-      mode: binding.mode,
-      modelId: binding.modelId,
-      expiresAt: Date.now() + 120000
-    };
+
+    // Este listener roda no window/capture, antes do formulário legado que interpreta tudo como dias.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (applying) return;
+
+    const modal = $("#folderReviewModal");
+    const folderId = modal?.dataset.folderId || activeFolderId;
+    if (!folderId || !window.OituDB) {
+      alert("Não foi possível identificar a pasta deste ajuste.");
+      return;
+    }
+
+    const result = readSettings();
+    if (result.error) {
+      alert(result.error);
+      return;
+    }
+
+    applying = true;
+    const submit = event.target.querySelector('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    try {
+      const applied = await applyFolderSettings(folderId, result.settings);
+      if (!applied) return;
+      closeFolderReviewModal();
+      showToast("Ajustes de revisão aplicados à pasta.");
+    } catch (error) {
+      console.error("OituCards: não foi possível aplicar os ajustes de revisão da pasta.", error);
+      alert("Não foi possível aplicar os ajustes de revisão da pasta.");
+    } finally {
+      applying = false;
+      if (submit) submit.disabled = false;
+    }
   }
 
-  function clearWhenClosing(event) {
+  function captureFolderContext(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    if (target.closest('[data-enh-close="folderReviewModal"]')) applyContext = null;
+    const edit = target.closest("[data-edit-folder]");
+    if (edit) {
+      activeFolderId = edit.dataset.editFolder || edit.closest("[data-folder-id]")?.dataset.folderId || activeFolderId;
+      const modal = $("#folderReviewModal");
+      if (modal && activeFolderId) modal.dataset.folderId = activeFolderId;
+      return;
+    }
+    if (target.closest("#folderReviewSettingsButton")) {
+      const modal = $("#folderReviewModal");
+      if (modal && activeFolderId) modal.dataset.folderId = activeFolderId;
+    }
   }
 
-  function init() {
-    patchDatabase();
-    setTimeout(patchDatabase, 0);
-    setTimeout(patchDatabase, 250);
-  }
-
-  document.addEventListener("submit", prepareFolderApply, true);
-  document.addEventListener("click", clearWhenClosing, true);
-
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
-  else init();
+  // Window + capture garante precedência sobre todos os handlers legados no document/form.
+  window.addEventListener("submit", handleFolderSubmit, true);
+  window.addEventListener("click", captureFolderContext, true);
 })();
