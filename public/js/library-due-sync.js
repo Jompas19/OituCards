@@ -3,8 +3,8 @@
   window.__oitucardsLibraryDueSync = true;
 
   const state = {
-    rawCards: null,
-    rawPromise: null,
+    cardMetas: null,
+    metaPromise: null,
     dirty: true,
     syncPromise: null,
     rerunRequested: false,
@@ -31,35 +31,41 @@
 
   function markDirty() {
     state.dirty = true;
-    state.rawCards = null;
-    state.rawPromise = null;
+    state.cardMetas = null;
+    state.metaPromise = null;
     clearTimeout(state.dueTimer);
     state.dueTimer = null;
   }
 
-  async function readRawCards() {
-    if (!state.dirty && state.rawCards) return state.rawCards;
-    if (state.rawPromise) return state.rawPromise;
+  async function readCardMetas() {
+    if (!state.dirty && state.cardMetas) return state.cardMetas;
+    if (state.metaPromise) return state.metaPromise;
 
-    state.rawPromise = (async () => {
-      const db = await OituDB.openDB();
-      const cards = await new Promise((resolve, reject) => {
-        const tx = db.transaction("cards", "readonly");
-        const request = tx.objectStore("cards").getAll();
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        tx.onerror = () => reject(tx.error);
-      });
-      state.rawCards = cards;
+    state.metaPromise = (async () => {
+      let cards;
+      if (typeof OituDB.getAllCardMetas === "function") {
+        cards = await OituDB.getAllCardMetas();
+      } else {
+        // Compatibilidade de segurança para versões antigas durante atualização de cache.
+        const db = await OituDB.openDB();
+        cards = await new Promise((resolve, reject) => {
+          const tx = db.transaction("cards", "readonly");
+          const request = tx.objectStore("cards").getAll();
+          request.onsuccess = () => resolve(request.result || []);
+          request.onerror = () => reject(request.error);
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+      state.cardMetas = cards || [];
       state.dirty = false;
-      state.rawPromise = null;
-      return cards;
+      state.metaPromise = null;
+      return state.cardMetas;
     })().catch((error) => {
-      state.rawPromise = null;
+      state.metaPromise = null;
       throw error;
     });
 
-    return state.rawPromise;
+    return state.metaPromise;
   }
 
   function buildCounts(cards, decks, folders) {
@@ -153,7 +159,7 @@
 
     state.syncPromise = (async () => {
       const [cards, decks, folders] = await Promise.all([
-        readRawCards(),
+        readCardMetas(),
         OituDB.getDecks(),
         OituDB.getFolders()
       ]);
