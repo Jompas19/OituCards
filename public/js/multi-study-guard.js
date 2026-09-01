@@ -1,4 +1,20 @@
 (function () {
+  function installReviewDueFirstPaintGuard() {
+    if (document.querySelector("#reviewDueFirstPaintGuard")) return;
+    const style = document.createElement("style");
+    style.id = "reviewDueFirstPaintGuard";
+    style.textContent = `
+      html:not(.review-due-ready) #deckList .review-due-badge,
+      html:not(.review-due-ready) #deckList .folder-review-due,
+      #deckList.review-due-sync-pending .review-due-badge,
+      #deckList.review-due-sync-pending .folder-review-due {
+        visibility: hidden !important;
+      }
+    `;
+    document.head.appendChild(style);
+    setTimeout(() => document.documentElement.classList.add("review-due-ready"), 8000);
+  }
+
   function loadLibraryPerformance() {
     if (document.querySelector('script[data-oitucards-library-performance]')) return;
     const script = document.createElement("script");
@@ -160,6 +176,27 @@
     document.body.appendChild(script);
   }
 
+  function loadReviewFinalAuthority(attempt = 0) {
+    if (document.querySelector('script[data-oitucards-review-final-authority]')) return;
+    const ready = window.__oitucardsReviewSystemStabilizer &&
+      window.__oitucardsReviewCreationDefaultFix &&
+      window.__oitucardsLibraryDueSync;
+    if (!ready && attempt < 160) {
+      setTimeout(() => loadReviewFinalAuthority(attempt + 1), 50);
+      return;
+    }
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/review-final-authority.js?v=20260831-2215";
+    script.dataset.oitucardsReviewFinalAuthority = "true";
+    script.onerror = () => {
+      document.documentElement.classList.add("review-due-ready");
+      console.error("Não foi possível carregar a autoridade final do sistema de revisão.");
+    };
+    document.body.appendChild(script);
+  }
+
+  installReviewDueFirstPaintGuard();
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
@@ -169,6 +206,7 @@
   loadStudyAnnotations();
   loadStudyFlipToggle();
   loadReviewModels();
+  loadReviewFinalAuthority();
 
   document.addEventListener("mousedown", (event) => {
     if (event.target?.id !== "cardModal") return;
