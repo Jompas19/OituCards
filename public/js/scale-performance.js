@@ -7,6 +7,8 @@
   const META_STORE = "cardMeta";
   const MEDIA_STORE = "media";
   const META_BATCH_SIZE = 600;
+  const MEDIA_URL_CACHE_LIMIT = 96;
+  const MEDIA_PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
 
   const state = {
     libraryReadDepth: 0,
@@ -14,7 +16,10 @@
     libraryWrapped: false,
     dbHelpersInstalled: false,
     coveragePromise: null,
-    rerenderAfterCoverage: false
+    rerenderAfterCoverage: false,
+    mediaUrls: new Map(),
+    editorMediaPatched: false,
+    mediaObserversInstalled: false
   };
 
   function normalizedRating(card) {
@@ -272,6 +277,154 @@
     else setTimeout(run, 80);
   }
 
+  async function putMediaBatch(items) {
+    if (!Array.isArray(items) || !items.length) return;
+    const db = await openDb();
+    if (!db.objectStoreNames.contains(MEDIA_STORE)) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_STORE, "readwrite");
+      const store = tx.objectStore(MEDIA_STORE);
+      items.forEach((item) => {
+        if (!item?.id || !item?.blob) return;
+        store.put({
+          id: item.id,
+          blob: item.blob,
+          mime: item.mime || item.blob.type || "application/octet-stream",
+          name: item.name || null,
+          size: Number(item.size) || item.blob.size || 0,
+          createdAt: item.createdAt || new Date().toISOString()
+        });
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Falha ao gravar mídia no navegador."));
+    });
+  }
+
+  async function getMediaRecord(id) {
+    const db = await openDb();
+    if (!db.objectStoreNames.contains(MEDIA_STORE)) return null;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_STORE, "readonly");
+      const req = tx.objectStore(MEDIA_STORE).get(id);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function touchMediaUrl(id, url) {
+    if (state.mediaUrls.has(id)) state.mediaUrls.delete(id);
+    state.mediaUrls.set(id, url);
+    while (state.mediaUrls.size > MEDIA_URL_CACHE_LIMIT) {
+      const oldest = state.mediaUrls.keys().next().value;
+      const oldUrl = state.mediaUrls.get(oldest);
+      state.mediaUrls.delete(oldest);
+      try { URL.revokeObjectURL(oldUrl); } catch (_) {}
+    }
+  }
+
+  async function mediaUrl(id) {
+    if (!id) return null;
+    const cached = state.mediaUrls.get(id);
+    if (cached) {
+      touchMediaUrl(id, cached);
+      return cached;
+    }
+    const record = await getMediaRecord(id);
+    if (!record?.blob) return null;
+    const url = URL.createObjectURL(record.blob);
+    touchMediaUrl(id, url);
+    return url;
+  }
+
+  async function hydrateElement(root) {
+    if (!root?.querySelectorAll) return;
+    const images = [...root.querySelectorAll("img[data-oitucards-media]")];
+    await Promise.all(images.map(async (image) => {
+      const id = image.dataset.oitucardsMedia;
+      if (!id || image.dataset.oitucardsMediaHydrating === "true") return;
+      if (String(image.src || "").startsWith("blob:")) return;
+      image.dataset.oitucardsMediaHydrating = "true";
+      try {
+        const url = await mediaUrl(id);
+        if (url && image.isConnected) image.src = url;
+      } catch (_) {
+      } finally {
+        delete image.dataset.oitucardsMediaHydrating;
+      }
+    }));
+  }
+
+  function protectMediaRefs(html) {
+    if (!/data-oitucards-media=/i.test(String(html || ""))) return { html, refs: [] };
+    const template = document.createElement("template");
+    template.innerHTML = String(html || "");
+    const refs = [];
+    template.content.querySelectorAll("img[data-oitucards-media]").forEach((img, index) => {
+      const id = img.dataset.oitucardsMedia;
+      if (!id) return;
+      const token = `__OCMEDIA_${index}_${crypto.randomUUID()}__`;
+      refs.push({ token, id, alt: img.getAttribute("alt") || "" });
+      img.setAttribute("src", MEDIA_PLACEHOLDER);
+      img.setAttribute("alt", token);
+      img.removeAttribute("data-oitucards-media");
+      img.removeAttribute("data-oitucards-media-hydrating");
+    });
+    return { html: template.innerHTML, refs };
+  }
+
+  function restoreMediaRefs(html, refs) {
+    if (!refs?.length) return html;
+    const byToken = new Map(refs.map((item) => [item.token, item]));
+    const template = document.createElement("template");
+    template.innerHTML = String(html || "");
+    template.content.querySelectorAll("img[alt]").forEach((img) => {
+      const ref = byToken.get(img.getAttribute("alt"));
+      if (!ref) return;
+      img.setAttribute("data-oitucards-media", ref.id);
+      img.setAttribute("src", "");
+      if (ref.alt) img.setAttribute("alt", ref.alt);
+      else img.removeAttribute("alt");
+      img.setAttribute("loading", "lazy");
+    });
+    return template.innerHTML.trim();
+  }
+
+  function patchEditorMedia() {
+    if (state.editorMediaPatched || !window.OituEditor?.sanitizeHtml) return;
+    state.editorMediaPatched = true;
+
+    const originalSanitize = OituEditor.sanitizeHtml.bind(OituEditor);
+    OituEditor.sanitizeHtml = function (html) {
+      const protectedRefs = protectMediaRefs(html);
+      const sanitized = originalSanitize(protectedRefs.html);
+      return restoreMediaRefs(sanitized, protectedRefs.refs);
+    };
+
+    const originalSetEditors = OituEditor.setEditors?.bind(OituEditor);
+    if (originalSetEditors) {
+      OituEditor.setEditors = function (frontHtml, backHtml) {
+        originalSetEditors(frontHtml, backHtml);
+        queueMicrotask(() => {
+          hydrateElement(document.getElementById("frontEditor"));
+          hydrateElement(document.getElementById("backEditor"));
+        });
+      };
+    }
+  }
+
+  function installMediaObservers() {
+    if (state.mediaObserversInstalled) return;
+    state.mediaObserversInstalled = true;
+    ["studyFront", "studyBack", "multiFront", "multiBack", "frontEditor", "backEditor"].forEach((id) => {
+      const root = document.getElementById(id);
+      if (!root) return;
+      const observer = new MutationObserver(() => hydrateElement(root));
+      observer.observe(root, { childList: true, subtree: true });
+      hydrateElement(root);
+    });
+  }
+
   async function cleanupDeckMeta(deckId) {
     const db = await openDb();
     if (!db.objectStoreNames.contains(META_STORE)) return;
@@ -315,6 +468,14 @@
     OituDB.getAllCardMetas = getAllCardMetas;
     OituDB.getCardMetasByDeck = getCardMetasByDeck;
     OituDB.ensureCardMetaCoverage = ensureCoverage;
+
+    window.OituScaleStorage = {
+      putMediaBatch,
+      getMediaRecord,
+      mediaUrl,
+      hydrateElement,
+      toCardMeta
+    };
   }
 
   function groupByDeck(metas) {
@@ -359,6 +520,8 @@
 
   function init() {
     installDbHelpers();
+    patchEditorMedia();
+    installMediaObservers();
     wrapLibraryRender();
     scheduleCoverageRepair();
   }
