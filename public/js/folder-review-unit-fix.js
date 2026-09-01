@@ -459,7 +459,7 @@
         const target = $(`#${ids[rating]}`);
         if (!target || !duration) continue;
         const text = `(revisão em ${formatDuration(duration)})`;
-        if (target.textContent !== text) target.textContent = text;
+        if (target.dataset.authorityReviewLabel !== text) target.dataset.authorityReviewLabel = text;
       }
     } catch (_) {}
   }
@@ -471,6 +471,20 @@
       renderPending[mode] = false;
       await renderRatingHints(mode);
     }, 0);
+  }
+
+  function ensureStyle() {
+    if ($("#reviewTimeAuthorityStyle")) return;
+    const style = document.createElement("style");
+    style.id = "reviewTimeAuthorityStyle";
+    style.textContent = `
+      .rating-interval[data-authority-review-label]{font-size:0!important}
+      .rating-interval[data-authority-review-label]::after{
+        content:attr(data-authority-review-label);
+        font-size:.78rem!important;
+      }
+    `;
+    document.head.appendChild(style);
   }
 
   function patchDatabase() {
@@ -651,22 +665,10 @@
         new MutationObserver(() => scheduleRender("study")).observe(studyFront, { childList: true, subtree: true });
       }
 
-      const studyRatings = $("#studyRatingArea");
-      if (studyRatings && studyRatings.dataset.reviewTimeAuthorityObserved !== "true") {
-        studyRatings.dataset.reviewTimeAuthorityObserved = "true";
-        new MutationObserver(() => scheduleRender("study")).observe(studyRatings, { childList: true, subtree: true, characterData: true });
-      }
-
       const multiFront = $("#multiFront");
       if (multiFront && multiFront.dataset.reviewTimeAuthorityObserved !== "true") {
         multiFront.dataset.reviewTimeAuthorityObserved = "true";
         new MutationObserver(() => scheduleRender("multi")).observe(multiFront, { childList: true, subtree: true });
-      }
-
-      const multiRatings = $("#multiRatings");
-      if (multiRatings && multiRatings.dataset.reviewTimeAuthorityObserved !== "true") {
-        multiRatings.dataset.reviewTimeAuthorityObserved = "true";
-        new MutationObserver(() => scheduleRender("multi")).observe(multiRatings, { childList: true, subtree: true, characterData: true });
       }
     };
 
@@ -676,6 +678,7 @@
   }
 
   function init() {
+    ensureStyle();
     patchDatabase();
     installScopedObservers();
     setTimeout(() => {
