@@ -2,13 +2,35 @@
   if (window.__oitucardsReviewModelsBootstrap) return;
   window.__oitucardsReviewModelsBootstrap = true;
 
+  function loadReviewSystemStabilizer() {
+    if (document.querySelector('script[data-oitucards-review-system-stabilizer]')) return;
+    const stabilizer = document.createElement("script");
+    stabilizer.async = false;
+    stabilizer.src = "js/review-system-stabilizer.js?v=20260831-2355";
+    stabilizer.dataset.oitucardsReviewSystemStabilizer = "true";
+    stabilizer.onerror = () => console.error("Não foi possível carregar a estabilização final do sistema de revisão.");
+    document.body.appendChild(stabilizer);
+  }
+
   function loadFolderReviewUnitFix() {
-    if (document.querySelector('script[data-oitucards-folder-review-unit-fix]')) return;
+    const existing = document.querySelector('script[data-oitucards-folder-review-unit-fix]');
+    if (existing) {
+      if (existing.dataset.loaded === "true") loadReviewSystemStabilizer();
+      else existing.addEventListener("load", loadReviewSystemStabilizer, { once: true });
+      return;
+    }
     const fix = document.createElement("script");
     fix.async = false;
     fix.src = "js/folder-review-unit-fix.js?v=20260831-2335";
     fix.dataset.oitucardsFolderReviewUnitFix = "true";
-    fix.onerror = () => console.error("Não foi possível carregar a correção das unidades herdadas da pasta.");
+    fix.addEventListener("load", () => {
+      fix.dataset.loaded = "true";
+      loadReviewSystemStabilizer();
+    }, { once: true });
+    fix.onerror = () => {
+      console.error("Não foi possível carregar a correção das unidades herdadas da pasta.");
+      loadReviewSystemStabilizer();
+    };
     document.body.appendChild(fix);
   }
 
