@@ -253,6 +253,16 @@
     document.body.appendChild(script);
   }
 
+  function loadLibraryDueSync() {
+    if (document.querySelector('script[data-oitucards-library-due-sync]')) return;
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = "js/library-due-sync.js?v=20260831-2155";
+    script.dataset.oitucardsLibraryDueSync = "true";
+    script.onerror = () => console.error("Não foi possível sincronizar os indicadores de revisão da biblioteca.");
+    document.body.appendChild(script);
+  }
+
   function scheduleLibraryRender(delay = 100) {
     clearTimeout(libraryTimer);
     libraryTimer = setTimeout(() => {
@@ -303,6 +313,7 @@
     wrapStudy();
     installReviewObserver();
     loadCreationDefaultFix();
+    loadLibraryDueSync();
     setTimeout(() => { patchDatabase(); wrapStudy(); installReviewObserver(); }, 0);
     setTimeout(() => { wrapStudy(); installReviewObserver(); }, 300);
   }
