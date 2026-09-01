@@ -135,7 +135,7 @@
     try { localStorage.setItem(AUTHORITY_STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
   }
 
-  async function readRawDecks() {
+  async function readRawEntities() {
     const db = await OituDB.openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("decks", "readonly");
@@ -163,7 +163,7 @@
       let value = null;
       request.onsuccess = () => {
         const current = request.result;
-        if (!current || current.kind === "folder") return;
+        if (!current) return;
         value = {
           ...current,
           reviewSettings: safeSettings,
@@ -176,33 +176,50 @@
       request.onerror = () => reject(request.error);
       tx.oncomplete = () => resolve(value);
       tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error("Falha ao aplicar o modelo geral ao baralho."));
+      tx.onabort = () => reject(tx.error || new Error("Falha ao aplicar o modelo geral."));
     });
     if (updated) rememberAuthority(id, safeSettings, modelId);
     return updated;
   }
 
-  async function applyGlobalToDeck(id) {
+  async function applyGlobalToEntity(id) {
     const modelId = currentGlobalValue();
     const settings = globalSettings(modelId);
-    const raw = await persistGlobalDirect(id, modelId, settings);
+    return persistGlobalDirect(id, modelId, settings);
+  }
+
+  async function applyGlobalToDeck(id) {
+    const raw = await applyGlobalToEntity(id);
     if (!raw) return null;
     try { return await OituDB.getDeck(id); } catch (_) { return raw; }
   }
 
+  async function applyGlobalToFolder(id) {
+    const raw = await applyGlobalToEntity(id);
+    if (!raw) return null;
+    try { return await OituDB.getFolder(id); } catch (_) { return raw; }
+  }
+
   function patchCreation() {
-    if (patched || !window.OituDB?.addDeck || !window.OituDB?.openDB) return false;
+    if (patched || !window.OituDB?.addDeck || !window.OituDB?.addFolder || !window.OituDB?.openDB) return false;
     patched = true;
     const previousAddDeck = OituDB.addDeck.bind(OituDB);
+    const previousAddFolder = OituDB.addFolder.bind(OituDB);
+
     OituDB.addDeck = async function (...args) {
       let deck = await previousAddDeck(...args);
       if (!deck?.id) return deck;
-      try {
-        deck = await applyGlobalToDeck(deck.id) || deck;
-      } catch (error) {
-        console.warn("OituCards: não foi possível aplicar o modelo geral final ao novo baralho.", error);
-      }
+      try { deck = await applyGlobalToDeck(deck.id) || deck; }
+      catch (error) { console.warn("OituCards: não foi possível aplicar o modelo geral final ao novo baralho.", error); }
       return deck;
+    };
+
+    OituDB.addFolder = async function (...args) {
+      let folder = await previousAddFolder(...args);
+      if (!folder?.id) return folder;
+      try { folder = await applyGlobalToFolder(folder.id) || folder; }
+      catch (error) { console.warn("OituCards: não foi possível aplicar o modelo geral final à nova pasta.", error); }
+      return folder;
     };
     return true;
   }
@@ -213,40 +230,26 @@
     try {
       const modelId = currentGlobalValue();
       const settings = globalSettings(modelId);
-      const decks = await readRawDecks();
-      const followers = decks.filter((item) => item?.kind !== "folder" && item?.reviewModelMode === "global");
-      for (const deck of followers) {
-        await persistGlobalDirect(deck.id, modelId, settings);
-      }
+      const entities = await readRawEntities();
+      const followers = entities.filter((item) => item?.reviewModelMode === "global");
+      for (const entity of followers) await persistGlobalDirect(entity.id, modelId, settings);
     } catch (error) {
-      console.warn("OituCards: não foi possível sincronizar todos os baralhos que seguem o modelo geral.", error);
+      console.warn("OituCards: não foi possível sincronizar todos os itens que seguem o modelo geral.", error);
     } finally {
       syncingFollowers = false;
     }
   }
 
-  async function revealAccurateCounts() {
-    const list = document.querySelector("#deckList");
-    if (list) list.classList.add("review-due-sync-pending");
-    try {
-      if (window.OituLibraryDueSync?.sync) await window.OituLibraryDueSync.sync();
-    } catch (_) {}
-    document.documentElement.classList.add("review-due-ready");
-    if (list) list.classList.remove("review-due-sync-pending");
-  }
-
-  function scheduleCountSync(delay = 0) {
-    clearTimeout(countSyncTimer);
-    const list = document.querySelector("#deckList");
-    if (list) list.classList.add("review-due-sync-pending");
-    countSyncTimer = setTimeout(() => revealAccurateCounts(), delay);
+  function refreshCounts() {
+    window.OituLibraryDueSync?.sync?.().catch?.(() => {});
   }
 
   function handleClick(event) {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     if (target.closest("[data-toggle-folder],#homeButton,#backHomeButton,#studyHomeButton,#multiHome")) {
-      scheduleCountSync(target.closest("[data-toggle-folder]") ? 80 : 180);
+      clearTimeout(countSyncTimer);
+      countSyncTimer = setTimeout(refreshCounts, 0);
     }
   }
 
@@ -267,13 +270,18 @@
       setTimeout(init, 50);
       return;
     }
-    syncGlobalFollowers().finally(() => scheduleCountSync(0));
+    syncGlobalFollowers().finally(refreshCounts);
   }
 
   window.addEventListener("click", handleClick, true);
   window.addEventListener("change", handleChange, true);
   window.addEventListener("submit", handleSubmit, true);
-  window.OituReviewFinalAuthority = { syncGlobalFollowers, applyGlobalToDeck, revealAccurateCounts };
+  window.OituReviewFinalAuthority = {
+    syncGlobalFollowers,
+    applyGlobalToDeck,
+    applyGlobalToFolder,
+    refreshCounts
+  };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
   else init();
