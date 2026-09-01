@@ -1,68 +1,69 @@
 (function () {
-  function installReviewDueFirstPaintGuard() {
-    if (document.querySelector("#reviewDueFirstPaintGuard")) return;
-    const style = document.createElement("style");
-    style.id = "reviewDueFirstPaintGuard";
-    style.textContent = `
-      html:not(.review-due-ready) #deckList .review-due-badge,
-      html:not(.review-due-ready) #deckList .folder-review-due,
-      #deckList.review-due-sync-pending .review-due-badge,
-      #deckList.review-due-sync-pending .folder-review-due {
-        visibility: hidden !important;
+  function installImmediateExactDueRead() {
+    if (!window.OituDB?.getCardsByDeck || OituDB.getCardsByDeck.__oitucardsImmediateExactDue) return;
+    const previous = OituDB.getCardsByDeck.bind(OituDB);
+    const wrapped = async function (...args) {
+      const cards = await previous(...args);
+      if (!Array.isArray(cards)) return cards;
+      const now = Date.now();
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      const endTime = end.getTime();
+      return cards.map((card) => {
+        if (!card?.nextReviewAt) return card;
+        const reviewCount = Number.isInteger(card.reviewCount)
+          ? card.reviewCount
+          : (card.lastReviewedAt || card.nextReviewAt || card.lastRating ? 1 : 0);
+        if (reviewCount === 0 && !card.lastReviewedAt && !card.lastRating) return card;
+        const due = new Date(card.nextReviewAt).getTime();
+        if (!Number.isFinite(due) || due <= now || due > endTime) return card;
+        return { ...card, nextReviewAt: new Date(endTime + 1000).toISOString() };
+      });
+    };
+    wrapped.__oitucardsImmediateExactDue = true;
+    OituDB.getCardsByDeck = wrapped;
+  }
+
+  function loadScript(selector, src, datasetKey, errorMessage, onload) {
+    const existing = document.querySelector(selector);
+    if (existing) {
+      if (onload) {
+        if (existing.dataset.loaded === "true") onload();
+        else existing.addEventListener("load", onload, { once: true });
       }
-    `;
-    document.head.appendChild(style);
-    setTimeout(() => document.documentElement.classList.add("review-due-ready"), 8000);
+      return existing;
+    }
+    const script = document.createElement("script");
+    script.async = false;
+    script.src = src;
+    if (datasetKey) script.dataset[datasetKey] = "true";
+    if (onload) script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      onload();
+    }, { once: true });
+    script.onerror = () => console.error(errorMessage);
+    document.body.appendChild(script);
+    return script;
   }
 
   function loadLibraryPerformance() {
-    if (document.querySelector('script[data-oitucards-library-performance]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/library-performance.js?v=20260823-1140";
-    script.dataset.oitucardsLibraryPerformance = "true";
-    script.onerror = () => console.error("Não foi possível carregar as otimizações da biblioteca.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-library-performance]', "js/library-performance.js?v=20260823-1140", "oitucardsLibraryPerformance", "Não foi possível carregar as otimizações da biblioteca.");
   }
 
   function loadLibraryStability() {
-    if (document.querySelector('script[data-oitucards-library-stability]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/library-stability.js?v=20260823-1518";
-    script.dataset.oitucardsLibraryStability = "true";
-    script.onerror = () => console.error("Não foi possível carregar a estabilização visual da biblioteca.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-library-stability]', "js/library-stability.js?v=20260823-1518", "oitucardsLibraryStability", "Não foi possível carregar a estabilização visual da biblioteca.");
   }
 
   function loadStudyExitFlow() {
-    if (document.querySelector('script[data-oitucards-study-exit-flow]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/study-exit-flow.js?v=20260823-1156";
-    script.dataset.oitucardsStudyExitFlow = "true";
-    script.onerror = () => console.error("Não foi possível carregar o fluxo de saída do estudo.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-study-exit-flow]', "js/study-exit-flow.js?v=20260823-1156", "oitucardsStudyExitFlow", "Não foi possível carregar o fluxo de saída do estudo.");
   }
 
   function loadExport() {
-    if (document.querySelector('script[data-oitucards-export]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/export.js?v=20260823-1202";
-    script.dataset.oitucardsExport = "true";
-    script.onerror = () => console.error("Não foi possível carregar o exportador APKG.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-export]', "js/export.js?v=20260823-1202", "oitucardsExport", "Não foi possível carregar o exportador APKG.");
   }
 
   function loadVisualPolish() {
-    if (document.querySelector('script[data-oitucards-visual-polish]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/visual-polish-lite.js?v=20260823-1636";
-    script.dataset.oitucardsVisualPolish = "true";
-    script.onerror = () => console.error("Não foi possível carregar os ajustes finos de interface.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-visual-polish]', "js/visual-polish-lite.js?v=20260823-1636", "oitucardsVisualPolish", "Não foi possível carregar os ajustes finos de interface.");
   }
 
   function releaseMobileVisualPatch() {
@@ -70,35 +71,13 @@
   }
 
   function loadVisualRefinement() {
-    const existing = document.querySelector('script[data-oitucards-visual-refinement]');
-    if (existing) {
-      if (existing.dataset.loaded === "true") {
-        releaseMobileVisualPatch();
-        loadVisualPolish();
-      } else {
-        existing.addEventListener("load", () => {
-          releaseMobileVisualPatch();
-          loadVisualPolish();
-        }, { once: true });
-      }
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/visual-refinement.js?v=20260823-1403";
-    script.dataset.oitucardsVisualRefinement = "true";
-    script.addEventListener("load", () => {
-      script.dataset.loaded = "true";
-      releaseMobileVisualPatch();
-      loadVisualPolish();
-    }, { once: true });
-    script.onerror = () => {
-      releaseMobileVisualPatch();
-      console.error("Não foi possível carregar o refinamento visual.");
-      loadVisualPolish();
-    };
-    document.body.appendChild(script);
+    loadScript(
+      'script[data-oitucards-visual-refinement]',
+      "js/visual-refinement.js?v=20260823-1403",
+      "oitucardsVisualRefinement",
+      "Não foi possível carregar o refinamento visual.",
+      () => { releaseMobileVisualPatch(); loadVisualPolish(); }
+    );
   }
 
   function isMobileTouchRuntime() {
@@ -109,71 +88,30 @@
   }
 
   function loadMobileCompat(next) {
-    if (!isMobileTouchRuntime()) {
-      next();
-      return;
-    }
-
-    const existing = document.querySelector('script[data-oitucards-mobile-compat]');
-    if (existing) {
-      if (existing.dataset.loaded === "true") next();
-      else existing.addEventListener("load", next, { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/mobile-compat.js?v=20260823-1714";
-    script.dataset.oitucardsMobileCompat = "true";
-    script.addEventListener("load", () => {
-      script.dataset.loaded = "true";
-      next();
-    }, { once: true });
-    script.onerror = () => {
-      console.error("Não foi possível carregar a compatibilidade mobile.");
-      next();
-    };
-    document.body.appendChild(script);
+    if (!isMobileTouchRuntime()) { next(); return; }
+    loadScript(
+      'script[data-oitucards-mobile-compat]',
+      "js/mobile-compat.js?v=20260823-1714",
+      "oitucardsMobileCompat",
+      "Não foi possível carregar a compatibilidade mobile.",
+      next
+    );
   }
 
   function loadAnimations() {
-    if (document.querySelector('script[data-oitucards-animations]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/animations.js?v=20260823-1550";
-    script.dataset.oitucardsAnimations = "true";
-    script.onerror = () => console.error("Não foi possível carregar as microanimações.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-animations]', "js/animations.js?v=20260823-1550", "oitucardsAnimations", "Não foi possível carregar as microanimações.");
   }
 
   function loadStudyAnnotations() {
-    if (document.querySelector('script[data-oitucards-study-annotations]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/study-annotations.js?v=20260823-1648";
-    script.dataset.oitucardsStudyAnnotations = "true";
-    script.onerror = () => console.error("Não foi possível carregar as anotações dos flashcards.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-study-annotations]', "js/study-annotations.js?v=20260823-1648", "oitucardsStudyAnnotations", "Não foi possível carregar as anotações dos flashcards.");
   }
 
   function loadStudyFlipToggle() {
-    if (document.querySelector('script[data-oitucards-study-flip-toggle]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/study-flip-toggle.js?v=20260825-1606";
-    script.dataset.oitucardsStudyFlipToggle = "true";
-    script.onerror = () => console.error("Não foi possível carregar a alternância do flashcard.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-study-flip-toggle]', "js/study-flip-toggle.js?v=20260825-1606", "oitucardsStudyFlipToggle", "Não foi possível carregar a alternância do flashcard.");
   }
 
   function loadReviewModels() {
-    if (document.querySelector('script[data-oitucards-review-models]')) return;
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/review-presets-bootstrap.js?v=20260831-2205";
-    script.dataset.oitucardsReviewModels = "true";
-    script.onerror = () => console.error("Não foi possível carregar os modelos de revisão.");
-    document.body.appendChild(script);
+    loadScript('script[data-oitucards-review-models]', "js/review-presets-bootstrap.js?v=20260831-2205", "oitucardsReviewModels", "Não foi possível carregar os modelos de revisão.");
   }
 
   function loadReviewFinalAuthority(attempt = 0) {
@@ -185,18 +123,19 @@
       setTimeout(() => loadReviewFinalAuthority(attempt + 1), 50);
       return;
     }
-    const script = document.createElement("script");
-    script.async = false;
-    script.src = "js/review-final-authority.js?v=20260831-2215";
-    script.dataset.oitucardsReviewFinalAuthority = "true";
-    script.onerror = () => {
-      document.documentElement.classList.add("review-due-ready");
-      console.error("Não foi possível carregar a autoridade final do sistema de revisão.");
-    };
-    document.body.appendChild(script);
+    loadScript(
+      'script[data-oitucards-review-final-authority]',
+      "js/review-final-authority.js?v=20260901-0115",
+      "oitucardsReviewFinalAuthority",
+      "Não foi possível carregar a autoridade final do sistema de revisão."
+    );
   }
 
-  installReviewDueFirstPaintGuard();
+  // Executa de forma síncrona neste script estático, antes de import.js/library.js.
+  // Assim o primeiro render já recebe a data efetiva correta para minutos e horas.
+  installImmediateExactDueRead();
+  document.documentElement.classList.add("review-due-ready");
+
   loadLibraryPerformance();
   loadLibraryStability();
   loadStudyExitFlow();
