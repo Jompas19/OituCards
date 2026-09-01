@@ -1,6 +1,6 @@
 (function () {
-  if (window.__oitucardsFolderReviewUnitFixV2) return;
-  window.__oitucardsFolderReviewUnitFixV2 = true;
+  if (window.__oitucardsFolderReviewUnitFixV3) return;
+  window.__oitucardsFolderReviewUnitFixV3 = true;
 
   const GLOBAL_MODEL_KEY = "OituCardsGlobalReviewModelV1";
   const MINUTE = "minutes";
@@ -26,6 +26,19 @@
     if (safe === MINUTE) return number;
     if (safe === HOUR) return number * 60;
     return number * 1440;
+  }
+
+  function profileForSettings(settings) {
+    const source = settings || {};
+    const units = source.intervalUnits || {};
+    const legacy = source.intervalUnit ? normalizeUnit(source.intervalUnit) : null;
+    return {
+      hard: normalizeUnit(units.hard || legacy || DAY),
+      medium: normalizeUnit(units.medium || legacy || DAY),
+      good: normalizeUnit(units.good || legacy || DAY),
+      easy: normalizeUnit(units.easy || legacy || DAY),
+      max: normalizeUnit(source.maxIntervalUnit || legacy || DAY)
+    };
   }
 
   function unitFor(field) {
@@ -106,6 +119,42 @@
     return { settings, profile };
   }
 
+  async function restoreFolderForm(folderId) {
+    if (!folderId || !window.OituDB) return;
+    const modal = $("#folderReviewModal");
+    if (!modal || modal.classList.contains("hidden")) return;
+    try {
+      const folder = await OituDB.getFolder(folderId);
+      const settings = folder?.reviewSettings;
+      if (!settings) return;
+
+      const intervals = settings.newIntervals || settings;
+      const values = {
+        folderRevHardDays: intervals?.hard,
+        folderRevMediumDays: intervals?.medium,
+        folderRevGoodDays: intervals?.good,
+        folderRevEasyDays: intervals?.easy,
+        folderRevHardMult: settings.multipliers?.hard,
+        folderRevMediumMult: settings.multipliers?.medium,
+        folderRevGoodMult: settings.multipliers?.good,
+        folderRevEasyMult: settings.multipliers?.easy,
+        folderRevMax: settings.maxIntervalDays
+      };
+      for (const [id, value] of Object.entries(values)) {
+        const input = $(`#${id}`);
+        if (input && Number.isFinite(Number(value))) input.value = String(value);
+      }
+
+      const profile = profileForSettings(settings);
+      for (const field of [...RATINGS, "max"]) {
+        const select = $(`select[data-review-time-scope="folder"][data-review-time-field="${field}"]`);
+        if (select) select.value = profile[field];
+      }
+    } catch (error) {
+      console.warn("OituCards: não foi possível restaurar os valores exatos da revisão da pasta.", error);
+    }
+  }
+
   function bindingForFolder() {
     let selection = String($("#folderReviewModelSelect")?.value || "custom");
     if (selection === "__create_review_model__") selection = "custom";
@@ -183,7 +232,6 @@
       ...binding
     });
 
-    // Sequencial de propósito: mantém o fluxo previsível com as camadas de compatibilidade do banco.
     for (const id of folderIds) await OituDB.updateFolder(id, patchFor());
     for (const deck of affectedDecks) await OituDB.updateDeck(deck.id, patchFor());
 
@@ -193,7 +241,6 @@
   async function handleFolderSubmit(event) {
     if (event.target?.id !== "folderReviewForm") return;
 
-    // Este listener roda no window/capture, antes do formulário legado que interpreta tudo como dias.
     event.preventDefault();
     event.stopImmediatePropagation();
     if (applying) return;
@@ -241,10 +288,12 @@
     if (target.closest("#folderReviewSettingsButton")) {
       const modal = $("#folderReviewModal");
       if (modal && activeFolderId) modal.dataset.folderId = activeFolderId;
+      const folderId = modal?.dataset.folderId || activeFolderId;
+      setTimeout(() => restoreFolderForm(folderId), 140);
+      setTimeout(() => restoreFolderForm(folderId), 320);
     }
   }
 
-  // Window + capture garante precedência sobre todos os handlers legados no document/form.
   window.addEventListener("submit", handleFolderSubmit, true);
   window.addEventListener("click", captureFolderContext, true);
 })();
