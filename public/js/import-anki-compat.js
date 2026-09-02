@@ -131,6 +131,47 @@
     OituDB.getDecks = patched;
   }
 
+  function isAnkiPackageSelected() {
+    const file = document.querySelector("#deckImportFileInput")?.files?.[0];
+    return /\.(?:apkg|colpkg|anki2|anki21)$/i.test(String(file?.name || ""));
+  }
+
+  function patchImportHierarchy() {
+    if (!window.OituDB?.addDeck || OituDB.addDeck.__oitucardsImportHierarchy) return;
+
+    const originalAddDeck = OituDB.addDeck.bind(OituDB);
+    const patched = async function (name, options = {}) {
+      const rawName = String(name || "").trim();
+      if (!importState.active || !isAnkiPackageSelected() || !rawName.includes("::")) {
+        return originalAddDeck(name, options);
+      }
+
+      const parts = rawName.split("::").map((part) => part.trim()).filter(Boolean);
+      if (parts.length < 2) return originalAddDeck(name, options);
+
+      const leaf = parts.pop();
+      let parentId = options?.folderId || null;
+      const folders = await OituDB.getFolders();
+
+      for (const part of parts) {
+        let folder = folders.find((item) =>
+          (item.parentId || null) === (parentId || null) &&
+          String(item.name || "").localeCompare(part, "pt-BR", { sensitivity: "base" }) === 0
+        );
+
+        if (!folder) {
+          folder = await OituDB.addFolder(part, parentId);
+          folders.push(folder);
+        }
+        parentId = folder.id;
+      }
+
+      return originalAddDeck(leaf, { ...options, folderId: parentId });
+    };
+    patched.__oitucardsImportHierarchy = true;
+    OituDB.addDeck = patched;
+  }
+
   function finishImportSession() {
     importState.active = false;
     importState.deckSnapshotPromise = null;
@@ -183,6 +224,7 @@
     importState.active = true;
     importState.deckSnapshotPromise = null;
     importState.sanitizeCache.clear();
+    patchImportHierarchy();
     patchImportDeckSnapshot();
     patchFastImportSanitizer();
     attachImportStatusObserver();
