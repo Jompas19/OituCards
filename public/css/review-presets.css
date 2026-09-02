@@ -32,7 +32,10 @@
 .site-theme-options button.is-active{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
 .compact-settings-button{width:100%;min-height:38px}
 
-.review-model-modal{width:min(760px,calc(100vw - 28px));max-height:min(88vh,760px);overflow:auto}
+.review-model-modal{width:min(760px,calc(100vw - 28px));max-height:min(88vh,760px);overflow:auto;overflow-x:hidden;padding:24px}
+.review-model-modal .modal-header{align-items:flex-start}
+.review-model-modal .modal-header>div,.review-model-modal form,.review-model-modal-section,.review-model-fields-grid{min-width:0}
+.review-model-modal h2,.review-model-modal p,.review-model-modal label,.review-model-modal strong{max-width:100%;overflow-wrap:anywhere;word-break:normal}
 .review-model-modal form{display:grid;gap:16px}
 .review-model-modal-section{display:grid;gap:10px;padding-top:4px}
 .review-model-modal-section>strong{font-size:.84rem;color:var(--text)}
@@ -52,6 +55,7 @@
   .save-review-model-action{padding:0 16px 18px;align-items:stretch}
   .save-review-model-action .button{width:100%}
   .site-settings-panel{position:fixed;top:64px;right:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 80px);overflow:auto}
+  .review-model-modal{width:calc(100vw - 18px);max-height:92vh;padding:18px}
   .review-model-fields-grid{grid-template-columns:1fr 1fr}
 }
 
