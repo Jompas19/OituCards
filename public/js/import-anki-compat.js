@@ -133,7 +133,9 @@
 
   function isAnkiPackageSelected() {
     const file = document.querySelector("#deckImportFileInput")?.files?.[0];
-    return /\.(?:apkg|colpkg|anki2|anki21)$/i.test(String(file?.name || ""));
+    if (/\.(?:apkg|colpkg|anki2|anki21)$/i.test(String(file?.name || ""))) return true;
+    const selectedMeta = String(document.querySelector("#importSelectedMeta")?.textContent || "").trim();
+    return /^(?:APKG|COLPKG|ANKI2|ANKI21)\b/i.test(selectedMeta);
   }
 
   function patchImportHierarchy() {
