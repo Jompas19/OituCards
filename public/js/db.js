@@ -189,12 +189,24 @@
       const tx = db.transaction(["decks", "cards"], "readwrite");
       const decks = tx.objectStore("decks");
       const cards = tx.objectStore("cards");
+      const index = cards.index("deckId");
+      const range = IDBKeyRange.only(id);
+
       decks.delete(id);
-      const cursorReq = cards.index("deckId").openCursor(IDBKeyRange.only(id));
-      cursorReq.onsuccess = (event) => {
-        const cursor = event.target.result;
-        if (cursor) { cursor.delete(); cursor.continue(); }
-      };
+
+      if (typeof index.getAllKeys === "function") {
+        const keysReq = index.getAllKeys(range);
+        keysReq.onsuccess = () => {
+          for (const key of keysReq.result || []) cards.delete(key);
+        };
+      } else {
+        const cursorReq = index.openCursor(range);
+        cursorReq.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) { cursor.delete(); cursor.continue(); }
+        };
+      }
+
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Não foi possível excluir o baralho."));
@@ -336,19 +348,29 @@
   }
 
   async function deleteCard(id) {
-    const card = await getCard(id);
-    if (!card) return;
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(["cards", "decks"], "readwrite");
-      tx.objectStore("cards").delete(id);
-      const decks = tx.objectStore("decks");
-      const req = decks.get(card.deckId);
-      req.onsuccess = () => {
-        if (req.result && req.result.kind !== "folder") decks.put({ ...req.result, kind: "deck", updatedAt: new Date().toISOString() });
+      const cards = tx.objectStore("cards");
+      const getReq = cards.get(id);
+
+      getReq.onsuccess = () => {
+        const card = getReq.result;
+        if (!card) return;
+
+        cards.delete(id);
+        const decks = tx.objectStore("decks");
+        const deckReq = decks.get(card.deckId);
+        deckReq.onsuccess = () => {
+          if (deckReq.result && deckReq.result.kind !== "folder") {
+            decks.put({ ...deckReq.result, kind: "deck", updatedAt: new Date().toISOString() });
+          }
+        };
       };
+      getReq.onerror = () => reject(getReq.error);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível excluir o flashcard."));
     });
   }
 
