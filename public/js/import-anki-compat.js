@@ -137,12 +137,39 @@
     importState.sanitizeCache.clear();
   }
 
+  function finishImportUi() {
+    const confirmButton = document.querySelector("#confirmImportButton");
+    if (confirmButton) confirmButton.disabled = true;
+
+    const importButton = document.querySelector("#importDeckButton");
+    if (importButton) importButton.disabled = true;
+
+    const modal = document.querySelector("#importModal");
+    if (modal) modal.classList.add("hidden");
+    if (!document.querySelector(".modal-backdrop:not(.hidden)")) document.body.style.overflow = "";
+
+    document.querySelector("#homeButton")?.click();
+
+    setTimeout(() => {
+      const reopenButton = document.querySelector("#importDeckButton");
+      if (reopenButton) reopenButton.disabled = false;
+    }, 1000);
+  }
+
   function inspectImportStatus() {
     const status = document.querySelector("#importStatus");
     if (!status || !importState.active) return;
     const text = String(status.textContent || "").trim();
     const tone = String(status.dataset.tone || "");
-    if (/\bcard(s)? importado(s)?\b/i.test(text) || tone === "error") finishImportSession();
+    const imported = /\bcard(s)? importado(s)?\b/i.test(text);
+
+    if (imported) {
+      finishImportSession();
+      finishImportUi();
+      return;
+    }
+
+    if (tone === "error") finishImportSession();
   }
 
   function attachImportStatusObserver() {
