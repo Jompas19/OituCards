@@ -1,4 +1,4 @@
-@import url("review-presets.css?v=20260901-1515");
+@import url("review-presets.css?v=20260902-1015");
 
 /* CSS crítico do primeiro frame: espelha o refinamento final sem esperar JS dinâmico. */
 .brand-button{height:48px;max-width:min(360px,58vw);min-width:138px;overflow:visible;opacity:0;transition:opacity .1s ease}
