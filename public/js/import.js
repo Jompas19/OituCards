@@ -4,9 +4,11 @@
   const SQLJS_URL = "https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/sql-wasm.min.js";
   const SQLJS_WASM_BASE = "https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/";
   const FZSTD_URL = "https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js";
-  const CARD_CHUNK_SIZE = 400;
+  const CARD_CHUNK_SIZE = 800;
+  const MEDIA_BATCH_SIZE = 12;
+  const MEDIA_BATCH_BYTES = 48 * 1024 * 1024;
   const LARGE_FILE_WARNING_BYTES = 250 * 1024 * 1024;
-  const MAX_INLINE_MEDIA_BYTES = 25 * 1024 * 1024;
+  const MAX_IMPORT_MEDIA_BYTES = 25 * 1024 * 1024;
 
   const state = {
     file: null,
@@ -14,7 +16,9 @@
     dependencies: new Map(),
     sqlPromise: null,
     warnings: [],
-    mediaCache: new Map()
+    pendingMediaContext: null,
+    activeImportDeckIds: [],
+    activeImportFolderIds: []
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -105,7 +109,9 @@
     if (state.busy) return;
     state.file = null;
     state.warnings = [];
-    state.mediaCache.clear();
+    state.pendingMediaContext = null;
+    state.activeImportDeckIds = [];
+    state.activeImportFolderIds = [];
     const input = $("#deckImportFileInput");
     if (input) input.value = "";
     const name = $("#importSelectedName");
@@ -277,21 +283,26 @@
     setBusy(false);
   }
 
-  function sanitizeHtml(html) {
+  function sanitizeHtml(html, options) {
     const source = String(html ?? "").trim();
     if (!source) return "";
     try {
-      return OituEditor.sanitizeHtml(source);
+      return OituEditor.sanitizeHtml(source, options);
     } catch (_) {
       return plainTextToHtml(source);
     }
   }
 
   function hasMeaningfulContent(html) {
-    if (!html) return false;
-    const holder = document.createElement("div");
-    holder.innerHTML = html;
-    return Boolean(holder.textContent?.trim() || holder.querySelector("img"));
+    const source = String(html || "");
+    if (!source) return false;
+    if (/<img\b/i.test(source)) return true;
+    const text = source
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/&(nbsp|#160|#xa0);/gi, " ")
+      .replace(/[\s\u200B-\u200D\uFEFF]+/g, "");
+    return Boolean(text);
   }
 
   async function readTextFile(file) {
@@ -695,15 +706,6 @@
     return ["jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "svg"].includes(extensionOf(name));
   }
 
-  async function bytesToDataUrl(bytes, mime) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error || new Error("Não foi possível ler a mídia."));
-      reader.readAsDataURL(new Blob([bytes], { type: mime }));
-    });
-  }
-
   function sanitizeSvgBytes(bytes) {
     try {
       const text = new TextDecoder().decode(bytes);
@@ -722,60 +724,40 @@
     }
   }
 
-  async function mediaDataUrl(name, mediaContext) {
-    const normalized = normalizeMediaName(name);
-    if (!normalized || !isImageName(normalized)) return null;
-    if (state.mediaCache.has(normalized)) return state.mediaCache.get(normalized);
-    const info = mediaContext?.byName?.get(normalized);
-    if (!info) return null;
-    if (Number(info.size) > MAX_INLINE_MEDIA_BYTES) {
-      state.warnings.push(`Mídia muito grande ignorada: ${normalized}`);
-      state.mediaCache.set(normalized, null);
-      return null;
-    }
-    const zipFile = mediaContext.zip.file(String(info.zipName));
-    if (!zipFile) return null;
-    let bytes = await zipFile.async("uint8array");
-    if (mediaContext.modern) {
-      try { bytes = window.fzstd.decompress(bytes); }
-      catch (_) {
-        state.warnings.push(`Não foi possível descompactar a mídia ${normalized}.`);
-        state.mediaCache.set(normalized, null);
-        return null;
-      }
-    }
-    const mime = mimeFromName(normalized);
-    if (mime === "image/svg+xml") {
-      const sanitized = sanitizeSvgBytes(bytes);
-      if (!sanitized) return null;
-      bytes = sanitized;
-    }
-    const dataUrl = await bytesToDataUrl(bytes, mime);
-    state.mediaCache.set(normalized, dataUrl);
-    return dataUrl;
-  }
-
-  async function resolveMediaInHtml(html, mediaContext) {
+  function resolveMediaInHtml(html, mediaContext, usedMediaIds) {
     let source = String(html || "");
     source = source.replace(/\[sound:([^\]]+)\]/gi, (_full, name) => `<span class="imported-audio-placeholder">🔊 ${escapeHtml(name)}</span>`);
     if (!mediaContext?.byName?.size || !/<img\b/i.test(source)) return sanitizeHtml(source);
-    const doc = new DOMParser().parseFromString(`<div id="oitucards-import-root">${source}</div>`, "text/html");
-    const root = doc.querySelector("#oitucards-import-root");
-    if (!root) return sanitizeHtml(source);
-    const images = [...root.querySelectorAll("img")];
-    for (const image of images) {
+    return sanitizeHtml(source, { transformImage(image) {
       const rawSrc = image.getAttribute("src") || "";
-      if (/^(data:|https?:|blob:)/i.test(rawSrc)) continue;
-      const dataUrl = await mediaDataUrl(rawSrc, mediaContext);
-      if (dataUrl) image.setAttribute("src", dataUrl);
-      else image.replaceWith(doc.createTextNode(`[imagem: ${normalizeMediaName(rawSrc)}]`));
-    }
-    return sanitizeHtml(root.innerHTML);
+      if (/^(data:|https?:|blob:)/i.test(rawSrc)) return;
+      const normalized = normalizeMediaName(rawSrc);
+      const info = mediaContext.byName.get(normalized);
+      if (!info || !isImageName(normalized) || Number(info.size) > MAX_IMPORT_MEDIA_BYTES) {
+        if (info && Number(info.size) > MAX_IMPORT_MEDIA_BYTES && !info.rejected) {
+          info.rejected = true;
+          state.warnings.push(`Mídia muito grande ignorada: ${normalized}`);
+        }
+        image.replaceWith(document.createTextNode(`[imagem: ${normalized}]`));
+        return;
+      }
+      if (!info.id) {
+        info.id = crypto.randomUUID();
+        info.name = normalized;
+        info.deckIds = new Set();
+        mediaContext.byId.set(info.id, info);
+      }
+      usedMediaIds?.add(info.id);
+      image.removeAttribute("src");
+      image.dataset.oituMediaId = info.id;
+      image.setAttribute("loading", "lazy");
+      if (!image.getAttribute("alt")) image.setAttribute("alt", normalized);
+    }});
   }
 
   async function readMediaContext(zip, modern) {
     const mediaFile = zip.file("media");
-    if (!mediaFile) return { zip, modern, byName: new Map() };
+    if (!mediaFile) return { zip, modern, byName: new Map(), byId: new Map() };
     const byName = new Map();
     if (modern) {
       let bytes = await mediaFile.async("uint8array");
@@ -798,7 +780,7 @@
         state.warnings.push("O mapa de mídia do pacote não pôde ser lido.");
       }
     }
-    return { zip, modern, byName };
+    return { zip, modern, byName, byId: new Map() };
   }
 
   async function parseAnkiDatabase(bytes, mediaContext, fallbackName) {
@@ -820,15 +802,16 @@
         const row = rows[index];
         const did = String(row.did);
         const deckName = deckNames.get(did) || fallbackName || "Baralho importado";
-        if (!groups.has(did)) groups.set(did, { name: deckName, cards: [] });
+        if (!groups.has(did)) groups.set(did, { name: deckName, cards: [], mediaIds: new Set() });
+        const group = groups.get(did);
         const fields = String(row.flds || "").split("\u001f");
         const raw = createCardFromAnkiFields(fields, row.ord);
-        const frontHtml = await resolveMediaInHtml(raw.frontHtml, mediaContext);
-        const backHtml = await resolveMediaInHtml(raw.backHtml, mediaContext);
-        if (hasMeaningfulContent(frontHtml) && hasMeaningfulContent(backHtml)) groups.get(did).cards.push({ frontHtml, backHtml });
-        if ((index + 1) % 25 === 0 || index + 1 === rows.length) {
-          const pct = 10 + ((index + 1) / rows.length) * 55;
-          setProgress(pct, `Convertendo cards do Anki: ${index + 1}/${rows.length}`);
+        const frontHtml = resolveMediaInHtml(raw.frontHtml, mediaContext, group.mediaIds);
+        const backHtml = resolveMediaInHtml(raw.backHtml, mediaContext, group.mediaIds);
+        if (hasMeaningfulContent(frontHtml) && hasMeaningfulContent(backHtml)) group.cards.push({ frontHtml, backHtml });
+        if ((index + 1) % 100 === 0 || index + 1 === rows.length) {
+          const pct = 10 + ((index + 1) / rows.length) * 38;
+          setProgress(pct, `Preparando cards do Anki: ${index + 1}/${rows.length}`);
           await new Promise((resolve) => setTimeout(resolve, 0));
         }
       }
@@ -862,12 +845,13 @@
       catch (_) { throw new Error("Não foi possível descompactar a coleção moderna do Anki."); }
     }
 
-    let mediaContext = { zip, modern, byName: new Map() };
+    let mediaContext = { zip, modern, byName: new Map(), byId: new Map() };
     try {
       mediaContext = await readMediaContext(zip, modern);
     } catch (_) {
       state.warnings.push("As mídias do pacote não puderam ser processadas; os cards de texto ainda serão importados.");
     }
+    state.pendingMediaContext = mediaContext;
     return parseAnkiDatabase(collectionBytes, mediaContext, filenameWithoutExtension(file.name));
   }
 
@@ -878,93 +862,195 @@
     return parseAnkiDatabase(bytes, null, filenameWithoutExtension(file.name));
   }
 
-  async function getUniqueDeckName(baseName, reserved) {
-    const decks = await OituDB.getDecks();
-    const used = new Set(decks.map((deck) => String(deck.name).trim().toLocaleLowerCase()));
-    reserved.forEach((name) => used.add(String(name).trim().toLocaleLowerCase()));
+  function uniqueDeckName(baseName, used) {
     const clean = String(baseName || "Baralho importado").trim().slice(0, 120) || "Baralho importado";
-    if (!used.has(clean.toLocaleLowerCase())) return clean;
+    if (!used.has(clean.toLocaleLowerCase())) {
+      used.add(clean.toLocaleLowerCase());
+      return clean;
+    }
     let index = 2;
     while (used.has(`${clean} (${index})`.toLocaleLowerCase())) index += 1;
-    return `${clean} (${index})`.slice(0, 120);
+    const name = `${clean} (${index})`.slice(0, 120);
+    used.add(name.toLocaleLowerCase());
+    return name;
   }
 
-  function openDirectDb() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open("OituCardsDB", 1);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+  function folderLookupKey(parentId, name) {
+    return `${parentId || "root"}\u0000${String(name || "").trim().toLocaleLowerCase()}`;
+  }
+
+  function inheritedReviewFields(folder) {
+    if (!folder?.reviewSettings) return {};
+    let reviewSettings;
+    try { reviewSettings = structuredClone(folder.reviewSettings); }
+    catch (_) { reviewSettings = JSON.parse(JSON.stringify(folder.reviewSettings)); }
+    return {
+      reviewSettings,
+      ...(folder.reviewModelMode ? { reviewModelMode: folder.reviewModelMode } : {}),
+      ...(folder.reviewModelId ? { reviewModelId: folder.reviewModelId } : {})
+    };
+  }
+
+  async function prepareImportedLibrary(validDecks) {
+    const [existingDecks, existingFolders] = await Promise.all([OituDB.getDecks(), OituDB.getFolders()]);
+    const usedDeckNames = new Map();
+    existingDecks.forEach((deck) => {
+      const parent = deck.folderId || null;
+      if (!usedDeckNames.has(parent)) usedDeckNames.set(parent, new Set());
+      usedDeckNames.get(parent).add(String(deck.name || "").trim().toLocaleLowerCase());
     });
+    const folderLookup = new Map(existingFolders.map((folder) => [folderLookupKey(folder.parentId, folder.name), folder]));
+    const foldersById = new Map(existingFolders.map((folder) => [folder.id, folder]));
+    const folderDefinitions = [];
+    const deckDefinitions = [];
+    const pairs = [];
+    const now = new Date();
+    const importedAt = now.toISOString();
+    const summaryDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+    validDecks.forEach((sourceDeck) => {
+      const parts = String(sourceDeck.name || "Baralho importado").split("::").map((part) => part.trim()).filter(Boolean);
+      const leaf = parts.pop() || "Baralho importado";
+      let parentId = null;
+      for (const part of parts) {
+        const key = folderLookupKey(parentId, part);
+        let folder = folderLookup.get(key);
+        if (!folder) {
+          folder = { id: crypto.randomUUID(), name: part, parentId, ...inheritedReviewFields(foldersById.get(parentId)) };
+          folderDefinitions.push(folder);
+          folderLookup.set(key, folder);
+          foldersById.set(folder.id, folder);
+        }
+        parentId = folder.id;
+      }
+      if (!usedDeckNames.has(parentId)) usedDeckNames.set(parentId, new Set());
+      const deck = {
+        id: crypto.randomUUID(),
+        name: uniqueDeckName(leaf, usedDeckNames.get(parentId)),
+        folderId: parentId,
+        importedAt,
+        importSource: extensionOf(state.file?.name) || "arquivo",
+        cardCount: sourceDeck.cards.length,
+        studiedCount: 0,
+        dueCount: 0,
+        summaryDate,
+        ...inheritedReviewFields(foldersById.get(parentId))
+      };
+      deckDefinitions.push(deck);
+      pairs.push({ sourceDeck, deck });
+      sourceDeck.mediaIds?.forEach((mediaId) => state.pendingMediaContext?.byId?.get(mediaId)?.deckIds?.add(deck.id));
+    });
+
+    await OituDB.addLibraryBatch(folderDefinitions, deckDefinitions);
+    state.activeImportDeckIds = deckDefinitions.map((deck) => deck.id);
+    state.activeImportFolderIds = folderDefinitions.map((folder) => folder.id);
+    return { pairs, folderDefinitions, deckDefinitions };
   }
 
-  async function bulkInsertCards(deckId, cards, progressStart, progressEnd, overallLabel) {
-    const db = await openDirectDb();
-    const storedCards = [];
-    try {
-      for (let offset = 0; offset < cards.length; offset += CARD_CHUNK_SIZE) {
-        const chunk = cards.slice(offset, offset + CARD_CHUNK_SIZE);
-        await new Promise((resolve, reject) => {
-          const tx = db.transaction("cards", "readwrite");
-          const store = tx.objectStore("cards");
-          const now = new Date().toISOString();
-          chunk.forEach((card, localIndex) => {
-            const storedCard = {
-              id: crypto.randomUUID(),
-              deckId,
-              frontHtml: card.frontHtml,
-              backHtml: card.backHtml,
-              reviewStatus: null,
-              createdAt: new Date(Date.now() + offset + localIndex).toISOString(),
-              updatedAt: now
-            };
-            storedCards.push(storedCard);
-            store.add(storedCard);
-          });
-          tx.oncomplete = resolve;
-          tx.onerror = () => reject(tx.error);
-          tx.onabort = () => reject(tx.error || new Error("Falha ao gravar cards no navegador."));
+  async function persistCards(pairs) {
+    const total = pairs.reduce((sum, pair) => sum + pair.sourceDeck.cards.length, 0);
+    const baseTime = Date.now();
+    let sequence = 0;
+    let stored = 0;
+    let batch = [];
+    const flush = async () => {
+      if (!batch.length) return;
+      const current = batch;
+      batch = [];
+      await OituDB.addCardsBatch(current);
+      stored += current.length;
+      setProgress(50 + (stored / Math.max(1, total)) * 20, `Gravando flashcards: ${stored}/${total}`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    for (const { sourceDeck, deck } of pairs) {
+      for (const card of sourceDeck.cards) {
+        const createdAt = new Date(baseTime + sequence).toISOString();
+        sequence += 1;
+        batch.push({
+          id: crypto.randomUUID(),
+          deckId: deck.id,
+          frontHtml: card.frontHtml,
+          backHtml: card.backHtml,
+          reviewStatus: null,
+          createdAt,
+          updatedAt: createdAt
         });
-        const done = Math.min(cards.length, offset + chunk.length);
-        const ratio = cards.length ? done / cards.length : 1;
-        setProgress(progressStart + (progressEnd - progressStart) * ratio, `${overallLabel}: ${done}/${cards.length}`);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (batch.length >= CARD_CHUNK_SIZE) await flush();
       }
-    } finally {
-      db.close();
     }
-    return storedCards;
+    await flush();
+    return stored;
+  }
+
+  async function extractMediaRecord(info, mediaContext) {
+    try {
+      const zipFile = mediaContext.zip.file(String(info.zipName));
+      if (!zipFile) throw new Error("arquivo ausente");
+      let bytes = await zipFile.async("uint8array");
+      if (mediaContext.modern) bytes = window.fzstd.decompress(bytes);
+      const mime = mimeFromName(info.name);
+      if (mime === "image/svg+xml") {
+        const sanitized = sanitizeSvgBytes(bytes);
+        if (!sanitized) throw new Error("SVG inválido");
+        bytes = sanitized;
+      }
+      return {
+        id: info.id,
+        name: info.name,
+        mime,
+        size: bytes.byteLength,
+        deckIds: [...info.deckIds],
+        blob: new Blob([bytes], { type: mime })
+      };
+    } catch (_) {
+      state.warnings.push(`Não foi possível importar a mídia ${info.name}.`);
+      return null;
+    }
+  }
+
+  async function persistImportedMedia(mediaContext) {
+    const media = [...(mediaContext?.byId?.values?.() || [])].filter((info) => info.deckIds?.size);
+    if (!media.length) {
+      setProgress(99, "Finalizando importação...");
+      return 0;
+    }
+    let stored = 0;
+    let processed = 0;
+    while (processed < media.length) {
+      const group = [];
+      let estimatedBytes = 0;
+      while (processed + group.length < media.length && group.length < MEDIA_BATCH_SIZE) {
+        const candidate = media[processed + group.length];
+        const candidateBytes = Math.max(1, Number(candidate.size) || 1024 * 1024);
+        if (group.length && estimatedBytes + candidateBytes > MEDIA_BATCH_BYTES) break;
+        group.push(candidate);
+        estimatedBytes += candidateBytes;
+      }
+      const records = (await Promise.all(group.map((info) => extractMediaRecord(info, mediaContext)))).filter(Boolean);
+      await OituDB.putMediaBatch(records);
+      stored += records.length;
+      processed += group.length;
+      setProgress(70 + (processed / media.length) * 29, `Gravando imagens: ${processed}/${media.length}`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return stored;
   }
 
   async function persistDecks(decks) {
     const validDecks = decks.filter((deck) => deck?.cards?.length);
     if (!validDecks.length) throw new Error("Nenhum flashcard válido foi encontrado.");
-    const reserved = new Set();
-    let importedCards = 0;
-    const createdNames = [];
-
-    for (let index = 0; index < validDecks.length; index += 1) {
-      const sourceDeck = validDecks[index];
-      const uniqueName = await getUniqueDeckName(sourceDeck.name, reserved);
-      reserved.add(uniqueName);
-      const deck = await OituDB.addDeck(uniqueName);
-      const start = 68 + (index / validDecks.length) * 30;
-      const end = 68 + ((index + 1) / validDecks.length) * 30;
-      const storedCards = await bulkInsertCards(deck.id, sourceDeck.cards, start, end, `Gravando ${uniqueName}`);
-      const now = new Date();
-      const summaryDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      await OituDB.updateDeck(deck.id, {
-        importedAt: now.toISOString(),
-        importSource: extensionOf(state.file?.name) || "arquivo",
-        cardCount: storedCards.length,
-        studiedCount: 0,
-        dueCount: 0,
-        summaryDate
-      });
-      OituDB.seedCardsByDeck?.(deck.id, storedCards);
-      importedCards += sourceDeck.cards.length;
-      createdNames.push(uniqueName);
-    }
-    return { decks: validDecks.length, cards: importedCards, names: createdNames };
+    setProgress(49, "Criando pastas e baralhos...");
+    const prepared = await prepareImportedLibrary(validDecks);
+    const importedCards = await persistCards(prepared.pairs);
+    await persistImportedMedia(state.pendingMediaContext);
+    state.activeImportDeckIds = [];
+    state.activeImportFolderIds = [];
+    return {
+      decks: prepared.deckDefinitions.length,
+      cards: importedCards,
+      names: prepared.deckDefinitions.map((deck) => deck.name)
+    };
   }
 
   async function parseSelectedFile() {
@@ -980,17 +1066,19 @@
 
   async function runImport() {
     if (!state.file || state.busy) return;
+    const startedAt = performance.now();
     setBusy(true);
     state.warnings = [];
-    state.mediaCache.clear();
+    state.pendingMediaContext = null;
     try {
       setProgress(2, "Preparando importação...");
       const decks = await parseSelectedFile();
-      setProgress(66, `Arquivo lido: ${decks.reduce((sum, deck) => sum + deck.cards.length, 0)} cards encontrados.`);
+      setProgress(48, `Arquivo lido: ${decks.reduce((sum, deck) => sum + deck.cards.length, 0)} cards encontrados.`);
       const result = await persistDecks(decks);
       setProgress(100, "Importação concluída.");
       const warningSuffix = state.warnings.length ? ` ${state.warnings.length} aviso(s) de mídia.` : "";
-      setStatus(`${result.cards} ${result.cards === 1 ? "card importado" : "cards importados"} em ${result.decks} ${result.decks === 1 ? "baralho" : "baralhos"}.${warningSuffix}`, state.warnings.length ? "warning" : "success");
+      const elapsed = ((performance.now() - startedAt) / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      setStatus(`${result.cards} ${result.cards === 1 ? "card importado" : "cards importados"} em ${result.decks} ${result.decks === 1 ? "baralho" : "baralhos"}, concluídos em ${elapsed} s.${warningSuffix}`, state.warnings.length ? "warning" : "success");
       setTimeout(() => {
         if (state.busy) return;
         closeImportModal();
@@ -998,9 +1086,19 @@
       }, 850);
     } catch (error) {
       console.error("Falha na importação", error);
+      if (state.activeImportDeckIds.length || state.activeImportFolderIds.length) {
+        try {
+          await OituDB.deleteLibraryItems(state.activeImportDeckIds, state.activeImportFolderIds);
+        } catch (cleanupError) {
+          console.warn("OituCards: não foi possível remover integralmente a importação incompleta.", cleanupError);
+        }
+      }
+      state.activeImportDeckIds = [];
+      state.activeImportFolderIds = [];
       setProgress(0);
       setStatus(error?.message || "Não foi possível importar este arquivo.", "error");
     } finally {
+      state.pendingMediaContext = null;
       setBusy(false);
     }
   }

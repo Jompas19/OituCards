@@ -1,6 +1,6 @@
 (function () {
   const DB_NAME = "OituCardsDB";
-  const DB_VERSION = 1;
+  const DB_VERSION = 3;
   const REVIEW_MODEL_STORAGE_KEY = "OituCardsReviewPresetsV1";
   const GLOBAL_REVIEW_MODEL_KEY = "OituCardsGlobalReviewModelV1";
   const SYSTEM_REVIEW_SETTINGS = Object.freeze({
@@ -34,6 +34,10 @@
     if (!card?.nextReviewAt) return true;
     const due = new Date(card.nextReviewAt);
     if (Number.isNaN(due.getTime())) return true;
+    const unit = String(card.currentIntervalUnit || "").toLocaleLowerCase("pt-BR");
+    if (["minutes", "minute", "minutos", "minuto", "min", "hours", "hour", "horas", "hora", "h"].includes(unit)) {
+      return due <= new Date();
+    }
     const end = new Date();
     end.setHours(23, 59, 59, 999);
     return due <= end;
@@ -41,6 +45,22 @@
 
   function cloneCards(cards) {
     return (cards || []).map((card) => ({ ...card }));
+  }
+
+  function cardMetaFromCard(card) {
+    if (!card?.id || !card?.deckId) return null;
+    const {
+      frontHtml: _frontHtml,
+      backHtml: _backHtml,
+      annotationHtml: _annotationHtml,
+      ratingHistory,
+      ...meta
+    } = card;
+    if (!meta.lastRating && Array.isArray(ratingHistory)) {
+      const last = [...ratingHistory].reverse().find((entry) => REVIEW_RATINGS.includes(entry?.rating));
+      if (last) meta.lastRating = last.rating;
+    }
+    return meta;
   }
 
   function clearExpiredCardCache(deckId) {
@@ -73,27 +93,6 @@
     return cardCacheByDeck.get(deckId);
   }
 
-  // Compatibilidade do rollback: alguns navegadores ficaram com OituCardsDB
-  // na versão 2 após os testes antigos. O código estável usa a versão 1.
-  // Interceptamos somente esse caso para abrir a versão existente sem alterar
-  // o esquema nem apagar dados do usuário.
-  try {
-    const factoryProto = Object.getPrototypeOf(indexedDB);
-    const nativeOpen = factoryProto?.open;
-    if (typeof nativeOpen === "function" && !nativeOpen.__oitucardsLegacyVersionCompat) {
-      const compatOpen = function (name, version) {
-        if (String(name) === DB_NAME && Number(version) === DB_VERSION) {
-          return nativeOpen.call(this, name);
-        }
-        return arguments.length >= 2
-          ? nativeOpen.call(this, name, version)
-          : nativeOpen.call(this, name);
-      };
-      compatOpen.__oitucardsLegacyVersionCompat = true;
-      factoryProto.open = compatOpen;
-    }
-  } catch (_) {}
-
   function normalizeReviewSettings(raw) {
     const source = raw || {};
     const intervals = source.newIntervals || source || {};
@@ -121,12 +120,17 @@
   }
 
   function cloneReviewSettings(settings) {
+    const source = settings || {};
     const normalized = normalizeReviewSettings(settings);
-    return {
+    const cloned = {
       newIntervals: { ...normalized.newIntervals },
       multipliers: { ...normalized.multipliers },
       maxIntervalDays: normalized.maxIntervalDays
     };
+    if (source.intervalUnits && typeof source.intervalUnits === "object") cloned.intervalUnits = { ...source.intervalUnits };
+    if (source.intervalUnit) cloned.intervalUnit = source.intervalUnit;
+    if (source.maxIntervalUnit) cloned.maxIntervalUnit = source.maxIntervalUnit;
+    return cloned;
   }
 
   function readReviewModels() {
@@ -167,24 +171,73 @@
     };
   }
 
+  function ensureSchema(event) {
+    const db = event.target.result;
+    const upgradeTx = event.target.transaction;
+    const deckStore = db.objectStoreNames.contains("decks")
+      ? upgradeTx.objectStore("decks")
+      : db.createObjectStore("decks", { keyPath: "id" });
+    if (!deckStore.indexNames.contains("createdAt")) deckStore.createIndex("createdAt", "createdAt", { unique: false });
+
+    const cardStore = db.objectStoreNames.contains("cards")
+      ? upgradeTx.objectStore("cards")
+      : db.createObjectStore("cards", { keyPath: "id" });
+    if (!cardStore.indexNames.contains("deckId")) cardStore.createIndex("deckId", "deckId", { unique: false });
+    if (!cardStore.indexNames.contains("createdAt")) cardStore.createIndex("createdAt", "createdAt", { unique: false });
+
+    const metaStore = db.objectStoreNames.contains("cardMeta")
+      ? upgradeTx.objectStore("cardMeta")
+      : db.createObjectStore("cardMeta", { keyPath: "id" });
+    if (!metaStore.indexNames.contains("deckId")) metaStore.createIndex("deckId", "deckId", { unique: false });
+    if (!metaStore.indexNames.contains("createdAt")) metaStore.createIndex("createdAt", "createdAt", { unique: false });
+
+    const mediaStore = db.objectStoreNames.contains("media")
+      ? upgradeTx.objectStore("media")
+      : db.createObjectStore("media", { keyPath: "id" });
+    if (!mediaStore.indexNames.contains("deckIds")) mediaStore.createIndex("deckIds", "deckIds", { unique: false, multiEntry: true });
+  }
+
   function openDB() {
     if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains("decks")) {
-          const deckStore = db.createObjectStore("decks", { keyPath: "id" });
-          deckStore.createIndex("createdAt", "createdAt", { unique: false });
+    const opening = new Promise((resolve, reject) => {
+      const finish = (db) => {
+        let complete = ["decks", "cards", "cardMeta", "media"].every((name) => db.objectStoreNames.contains(name));
+        if (complete) {
+          try {
+            const tx = db.transaction(["cards", "cardMeta", "media"], "readonly");
+            complete = tx.objectStore("cards").indexNames.contains("deckId") &&
+              tx.objectStore("cardMeta").indexNames.contains("deckId") &&
+              tx.objectStore("media").indexNames.contains("deckIds");
+          } catch (_) {
+            complete = false;
+          }
         }
-        if (!db.objectStoreNames.contains("cards")) {
-          const cardStore = db.createObjectStore("cards", { keyPath: "id" });
-          cardStore.createIndex("deckId", "deckId", { unique: false });
-          cardStore.createIndex("createdAt", "createdAt", { unique: false });
+        if (complete && db.version >= DB_VERSION) {
+          db.onversionchange = () => db.close();
+          resolve(db);
+          return;
         }
+        const nextVersion = Math.max(DB_VERSION, db.version + 1);
+        db.close();
+        const upgrade = indexedDB.open(DB_NAME, nextVersion);
+        upgrade.onupgradeneeded = ensureSchema;
+        upgrade.onsuccess = () => {
+          upgrade.result.onversionchange = () => upgrade.result.close();
+          resolve(upgrade.result);
+        };
+        upgrade.onerror = () => reject(upgrade.error);
+        upgrade.onblocked = () => reject(new Error("Feche outras abas do OituCards e tente novamente."));
       };
-      request.onsuccess = () => resolve(request.result);
+
+      const request = indexedDB.open(DB_NAME);
+      request.onupgradeneeded = ensureSchema;
+      request.onsuccess = () => finish(request.result);
       request.onerror = () => reject(request.error);
+      request.onblocked = () => reject(new Error("Feche outras abas do OituCards e tente novamente."));
+    });
+    dbPromise = opening.catch((error) => {
+      dbPromise = null;
+      throw error;
     });
     return dbPromise;
   }
@@ -220,6 +273,81 @@
     };
     await run("decks", "readwrite", (store) => store.add(deck));
     return deck;
+  }
+
+  async function addLibraryBatch(folderDefinitions = [], deckDefinitions = []) {
+    const now = new Date().toISOString();
+    const folders = (folderDefinitions || []).map((definition) => ({
+      ...globalReviewDefaults(),
+      ...definition,
+      id: definition.id || crypto.randomUUID(),
+      kind: "folder",
+      name: String(definition.name || "").trim(),
+      parentId: definition.parentId || null,
+      createdAt: definition.createdAt || now,
+      updatedAt: definition.updatedAt || now
+    }));
+    const decks = (deckDefinitions || []).map((definition) => ({
+      ...globalReviewDefaults(),
+      ...definition,
+      id: definition.id || crypto.randomUUID(),
+      kind: "deck",
+      name: String(definition.name || "").trim(),
+      folderId: definition.folderId || null,
+      cardCount: Math.max(0, Number(definition.cardCount) || 0),
+      studiedCount: Math.max(0, Number(definition.studiedCount) || 0),
+      dueCount: Math.max(0, Number(definition.dueCount) || 0),
+      summaryDate: definition.summaryDate || todayKey(),
+      createdAt: definition.createdAt || now,
+      updatedAt: definition.updatedAt || now
+    }));
+    if (!folders.length && !decks.length) return { folders, decks };
+
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("decks", "readwrite");
+      const store = tx.objectStore("decks");
+      folders.forEach((folder) => store.add(folder));
+      decks.forEach((deck) => store.add(deck));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível criar a estrutura importada."));
+    });
+    return { folders, decks };
+  }
+
+  async function addCardsBatch(cards) {
+    const list = (cards || []).filter((card) => card?.id && card?.deckId);
+    if (!list.length) return 0;
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(["cards", "cardMeta"], "readwrite");
+      const cardStore = tx.objectStore("cards");
+      const metaStore = tx.objectStore("cardMeta");
+      list.forEach((card) => {
+        cardStore.add(card);
+        metaStore.put(cardMetaFromCard(card));
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível gravar os flashcards importados."));
+    });
+    return list.length;
+  }
+
+  async function putMediaBatch(records) {
+    const list = (records || []).filter((record) => record?.id && record?.blob instanceof Blob);
+    if (!list.length) return 0;
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("media", "readwrite");
+      const store = tx.objectStore("media");
+      list.forEach((record) => store.put(record));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível gravar as imagens importadas."));
+    });
+    return list.length;
   }
 
   async function updateDeck(id, patch) {
@@ -295,21 +423,24 @@
 
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(["decks", "cards"], "readwrite");
+      const tx = db.transaction(["decks", "cards", "cardMeta", "media"], "readwrite");
       const decks = tx.objectStore("decks");
       const cards = tx.objectStore("cards");
+      const cardMeta = tx.objectStore("cardMeta");
+      const media = tx.objectStore("media");
       const deckIndex = cards.index("deckId");
+      const metaDeckIndex = cardMeta.index("deckId");
       const DELETE_BATCH_SIZE = 400;
 
-      const deleteDeckCardsInBatches = (deckId) => {
+      const deleteByDeckInBatches = (store, index, deckId) => {
         const range = IDBKeyRange.only(deckId);
 
-        if (typeof deckIndex.getAllKeys === "function") {
+        if (typeof index.getAllKeys === "function") {
           const deleteNextBatch = () => {
-            const keysReq = deckIndex.getAllKeys(range, DELETE_BATCH_SIZE);
+            const keysReq = index.getAllKeys(range, DELETE_BATCH_SIZE);
             keysReq.onsuccess = () => {
               const keys = keysReq.result || [];
-              keys.forEach((key) => cards.delete(key));
+              keys.forEach((key) => store.delete(key));
               if (keys.length === DELETE_BATCH_SIZE) deleteNextBatch();
             };
           };
@@ -317,7 +448,7 @@
           return;
         }
 
-        const cursorReq = deckIndex.openCursor(range);
+        const cursorReq = index.openCursor(range);
         cursorReq.onsuccess = (event) => {
           const cursor = event.target.result;
           if (cursor) {
@@ -331,8 +462,36 @@
 
       uniqueDeckIds.forEach((id) => {
         decks.delete(id);
-        deleteDeckCardsInBatches(id);
+        deleteByDeckInBatches(cards, deckIndex, id);
+        deleteByDeckInBatches(cardMeta, metaDeckIndex, id);
       });
+
+      if (uniqueDeckIds.length) {
+        const deletedIds = new Set(uniqueDeckIds);
+        const mediaIndex = media.index("deckIds");
+        const touchedKeys = new Set();
+        let pendingDeckLookups = uniqueDeckIds.length;
+        const updateTouchedMedia = () => {
+          touchedKeys.forEach((key) => {
+            const request = media.get(key);
+            request.onsuccess = () => {
+              const record = request.result;
+              if (!record) return;
+              const nextDeckIds = (record.deckIds || []).filter((id) => !deletedIds.has(id));
+              if (!nextDeckIds.length) media.delete(key);
+              else if (nextDeckIds.length !== (record.deckIds || []).length) media.put({ ...record, deckIds: nextDeckIds });
+            };
+          });
+        };
+        uniqueDeckIds.forEach((deckId) => {
+          const request = mediaIndex.getAllKeys(IDBKeyRange.only(deckId));
+          request.onsuccess = () => {
+            (request.result || []).forEach((key) => touchedKeys.add(key));
+            pendingDeckLookups -= 1;
+            if (!pendingDeckLookups) updateTouchedMedia();
+          };
+        });
+      }
 
       tx.oncomplete = () => {
         uniqueDeckIds.forEach((id) => {
@@ -429,8 +588,9 @@
     };
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(["cards", "decks"], "readwrite");
+      const tx = db.transaction(["cards", "cardMeta", "decks"], "readwrite");
       tx.objectStore("cards").add(card);
+      tx.objectStore("cardMeta").put(cardMetaFromCard(card));
       const decks = tx.objectStore("decks");
       const req = decks.get(deckId);
       req.onsuccess = () => {
@@ -454,7 +614,7 @@
   async function updateCard(id, patch) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(["cards", "decks"], "readwrite");
+      const tx = db.transaction(["cards", "cardMeta", "decks"], "readwrite");
       const cards = tx.objectStore("cards");
       const req = cards.get(id);
       req.onsuccess = () => {
@@ -463,6 +623,7 @@
         const now = new Date().toISOString();
         const updated = { ...current, ...patch, id, updatedAt: now };
         cards.put(updated);
+        tx.objectStore("cardMeta").put(cardMetaFromCard(updated));
         const decks = tx.objectStore("decks");
         const deckReq = decks.get(current.deckId);
         deckReq.onsuccess = () => {
@@ -522,10 +683,182 @@
     });
   }
 
+  async function backfillCardSummaries(deckIds) {
+    const uniqueIds = [...new Set((deckIds || []).filter(Boolean))];
+    const result = new Map(uniqueIds.map((deckId) => [deckId, []]));
+    if (!uniqueIds.length) return result;
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(["cards", "cardMeta"], "readwrite");
+      const index = tx.objectStore("cards").index("deckId");
+      const metaStore = tx.objectStore("cardMeta");
+      uniqueIds.forEach((deckId) => {
+        const request = index.openCursor(IDBKeyRange.only(deckId));
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (!cursor) return;
+          const meta = cardMetaFromCard(cursor.value);
+          if (meta) {
+            result.get(deckId).push(meta);
+            metaStore.put(meta);
+          }
+          cursor.continue();
+        };
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível preparar os metadados dos flashcards antigos."));
+    });
+    result.forEach((cards) => cards.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
+    return result;
+  }
+
+  async function getCardSummariesByDeck(deckId) {
+    const db = await openDB();
+    const [summaries, deck] = await Promise.all([
+      new Promise((resolve, reject) => {
+        const tx = db.transaction("cardMeta", "readonly");
+        const req = tx.objectStore("cardMeta").index("deckId").getAll(IDBKeyRange.only(deckId));
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      }),
+      getDeck(deckId)
+    ]);
+    if (Number.isInteger(deck?.cardCount) && summaries.length === deck.cardCount) {
+      summaries.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      return summaries;
+    }
+
+    return (await backfillCardSummaries([deckId])).get(deckId) || [];
+  }
+
+  async function getCardSummariesForDecks(deckIds) {
+    const uniqueIds = [...new Set((deckIds || []).filter(Boolean))];
+    if (!uniqueIds.length) return [];
+    const db = await openDB();
+    const grouped = await new Promise((resolve, reject) => {
+      const tx = db.transaction("cardMeta", "readonly");
+      const index = tx.objectStore("cardMeta").index("deckId");
+      const result = new Map();
+      uniqueIds.forEach((deckId) => {
+        const req = index.getAll(IDBKeyRange.only(deckId));
+        req.onsuccess = () => result.set(deckId, req.result || []);
+      });
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível carregar os resumos dos flashcards."));
+    });
+
+    const deckCounts = new Map((await getDecks()).map((deck) => [deck.id, deck.cardCount]));
+    const missing = uniqueIds.filter((deckId) => {
+      const expected = deckCounts.get(deckId);
+      return !Number.isInteger(expected) || (grouped.get(deckId) || []).length !== expected;
+    });
+    if (missing.length) {
+      const legacy = await backfillCardSummaries(missing);
+      missing.forEach((deckId) => grouped.set(deckId, legacy.get(deckId) || []));
+    }
+    grouped.forEach((cards) => {
+      cards.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    });
+    return uniqueIds.flatMap((deckId) => grouped.get(deckId) || []);
+  }
+
+  async function resetDeckProgressBatch(cards) {
+    const list = (cards || []).filter((card) => card?.id && card?.deckId);
+    if (!list.length) return 0;
+    const patch = {
+      reviewStatus: null,
+      lastRating: null,
+      lastReviewedAt: null,
+      reviewCount: 0,
+      currentIntervalDays: null,
+      currentIntervalValue: null,
+      currentIntervalUnit: null,
+      currentIntervalMinutes: null,
+      currentIntervalHours: null,
+      nextReviewAt: null,
+      ratingHistory: []
+    };
+    const db = await openDB();
+    const chunkSize = 500;
+    const updatedAt = new Date().toISOString();
+
+    for (let offset = 0; offset < list.length; offset += chunkSize) {
+      const chunk = list.slice(offset, offset + chunkSize);
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction(["cards", "cardMeta"], "readwrite");
+        const cardStore = tx.objectStore("cards");
+        const metaStore = tx.objectStore("cardMeta");
+        chunk.forEach(({ id }) => {
+          const request = cardStore.get(id);
+          request.onsuccess = () => {
+            const current = request.result;
+            if (!current) return;
+            const updated = { ...current, ...patch, updatedAt };
+            cardStore.put(updated);
+            metaStore.put(cardMetaFromCard(updated));
+          };
+        });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error("Não foi possível reiniciar o progresso dos flashcards."));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const deckIds = [...new Set(list.map((card) => card.deckId))];
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("decks", "readwrite");
+      const store = tx.objectStore("decks");
+      deckIds.forEach((deckId) => {
+        const request = store.get(deckId);
+        request.onsuccess = () => {
+          const deck = request.result;
+          if (!deck || deck.kind === "folder") return;
+          store.put({
+            ...deck,
+            studiedCount: 0,
+            dueCount: 0,
+            summaryDate: todayKey(),
+            updatedAt
+          });
+        };
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível atualizar os resumos dos baralhos."));
+    });
+
+    deckIds.forEach((deckId) => {
+      const cached = cachedCardsByDeck(deckId);
+      if (cached) cached.forEach((card) => Object.assign(card, patch));
+    });
+    return list.length;
+  }
+
+  async function getMediaBatch(ids) {
+    const uniqueIds = [...new Set((ids || []).filter(Boolean))];
+    if (!uniqueIds.length) return new Map();
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("media", "readonly");
+      const store = tx.objectStore("media");
+      const result = new Map();
+      uniqueIds.forEach((id) => {
+        const req = store.get(id);
+        req.onsuccess = () => { if (req.result) result.set(id, req.result); };
+      });
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível carregar a mídia."));
+    });
+  }
+
   async function deleteCard(id) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(["cards", "decks"], "readwrite");
+      const tx = db.transaction(["cards", "cardMeta", "decks"], "readwrite");
       const cards = tx.objectStore("cards");
       const getReq = cards.get(id);
       let deletedDeckId = null;
@@ -536,6 +869,7 @@
         deletedDeckId = card.deckId;
 
         cards.delete(id);
+        tx.objectStore("cardMeta").delete(id);
         const decks = tx.objectStore("decks");
         const deckReq = decks.get(card.deckId);
         deckReq.onsuccess = () => {
@@ -565,10 +899,56 @@
     });
   }
 
+  async function hydrateMedia(root) {
+    if (!(root instanceof Element || root instanceof Document || root instanceof DocumentFragment)) return;
+    const images = [
+      ...(root instanceof HTMLImageElement && root.dataset.oituMediaId ? [root] : []),
+      ...root.querySelectorAll("img[data-oitu-media-id]")
+    ].filter((image) => !image.dataset.oituMediaPending && !image.dataset.oituMediaLoaded);
+    if (!images.length) return;
+
+    images.forEach((image) => { image.dataset.oituMediaPending = "true"; });
+    let records;
+    try {
+      records = await getMediaBatch(images.map((image) => image.dataset.oituMediaId));
+    } catch (error) {
+      images.forEach((image) => { delete image.dataset.oituMediaPending; });
+      throw error;
+    }
+
+    images.forEach((image) => {
+      delete image.dataset.oituMediaPending;
+      if (!image.isConnected) return;
+      const record = records.get(image.dataset.oituMediaId);
+      if (!record?.blob) {
+        image.dataset.oituMediaMissing = "true";
+        return;
+      }
+      const url = URL.createObjectURL(record.blob);
+      const release = () => URL.revokeObjectURL(url);
+      image.addEventListener("load", release, { once: true });
+      image.addEventListener("error", release, { once: true });
+      image.src = url;
+      image.loading = "lazy";
+      image.dataset.oituMediaLoaded = "true";
+    });
+  }
+
+  function setMediaHtml(element, html, options = {}) {
+    if (!element) return Promise.resolve();
+    element.innerHTML = html || "";
+    if (options.hydrate === false) return Promise.resolve();
+    return hydrateMedia(element).catch((error) => {
+      console.warn("OituCards: não foi possível exibir uma mídia do flashcard.", error);
+    });
+  }
+
   window.OituDB = {
     openDB,
-    addDeck, updateDeck, updateDeckSummary, getDeck, getDecks, deleteDeck, deleteLibraryItems,
+    addDeck, addLibraryBatch, updateDeck, updateDeckSummary, getDeck, getDecks, deleteDeck, deleteLibraryItems,
     addFolder, updateFolder, getFolder, getFolders, deleteFolder,
-    addCard, updateCard, getCard, getCardsByDeck, deleteCard, seedCardsByDeck
+    addCard, addCardsBatch, updateCard, getCard, getCardsByDeck, getCardSummariesByDeck, getCardSummariesForDecks, resetDeckProgressBatch, deleteCard, seedCardsByDeck,
+    putMediaBatch, getMediaBatch
   };
+  window.OituMedia = { hydrate: hydrateMedia, setHtml: setMediaHtml, getRecords: getMediaBatch };
 })();

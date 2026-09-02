@@ -80,7 +80,7 @@
     saveSelection(name);
   }
 
-  function sanitizeHtml(html) {
+  function sanitizeHtml(html, options = {}) {
     const template = document.createElement("template");
     template.innerHTML = html;
 
@@ -97,16 +97,21 @@
         continue;
       }
 
+      if (node.tagName === "IMG" && typeof options.transformImage === "function") {
+        options.transformImage(node);
+        if (!node.parentNode) continue;
+      }
+
       const attrs = Array.from(node.attributes);
       for (const attr of attrs) {
         const name = attr.name.toLowerCase();
 
         if (node.tagName === "IMG" && name === "src") {
-          if (!attr.value.startsWith("data:image/")) node.removeAttribute(attr.name);
+          if (node.dataset.oituMediaId || (!attr.value.startsWith("data:image/") && !attr.value.startsWith("blob:"))) node.removeAttribute(attr.name);
           continue;
         }
 
-        if (node.tagName === "IMG" && ["alt", "loading"].includes(name)) continue;
+        if (node.tagName === "IMG" && ["alt", "loading", "data-oitu-media-id"].includes(name)) continue;
 
         if (name === "style") {
           const allowed = [];
@@ -152,8 +157,13 @@
   }
 
   function setEditors(frontHtml, backHtml) {
-    editorFor("front").innerHTML = frontHtml || "";
-    editorFor("back").innerHTML = backHtml || "";
+    if (window.OituMedia?.setHtml) {
+      window.OituMedia.setHtml(editorFor("front"), frontHtml || "");
+      window.OituMedia.setHtml(editorFor("back"), backHtml || "");
+    } else {
+      editorFor("front").innerHTML = frontHtml || "";
+      editorFor("back").innerHTML = backHtml || "";
+    }
     savedRanges.clear();
   }
 

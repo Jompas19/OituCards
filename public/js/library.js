@@ -199,11 +199,11 @@ current = current.parentId ? byId.get(current.parentId) : null;
 }
 return path;
 }
-async function normalizeAnkiPaths() {
-const decks = await OituDB.getDecks();
+async function normalizeAnkiPaths(knownDecks = null, knownFolders = null) {
+const decks = knownDecks || await OituDB.getDecks();
 const targets = decks.filter(deck => String(deck.name).includes("::"));
 if (!targets.length) return false;
-let folders = await OituDB.getFolders();
+let folders = knownFolders || await OituDB.getFolders();
 for (const deck of targets) {
 const parts = String(deck.name).split("::").map(part => part.trim()).filter(Boolean);
 if (parts.length < 2) continue;
@@ -237,20 +237,30 @@ due: Number.isInteger(dueCount) && dueCount >= 0 ? dueCount : 0
 };
 }
 function buildFolderSummaries(folders, decks, deckSummaries) {
-const folderSummaries = new Map();
-for (const folder of folders) {
-const ids = deckIdsForFolder(folder.id, folders, decks);
-let cardCount = 0;
-let due = 0;
-let pending = false;
-ids.forEach(id => {
-const summary = deckSummaries.get(id);
-if (!summary || summary.pending) { pending = true; return; }
-cardCount += summary.cardCount;
-due += summary.due;
-});
-folderSummaries.set(folder.id, { deckCount: ids.length, cardCount, due, pending });
+const folderSummaries = new Map(folders.map(folder => [folder.id, { deckCount: 0, cardCount: 0, due: 0, pending: false }]));
+const byId = new Map(folders.map(folder => [folder.id, folder]));
+decks.forEach(deck => {
+const summary = deckSummaries.get(deck.id);
+const contribution = {
+deckCount: 1,
+cardCount: summary?.pending ? 0 : (summary?.cardCount || 0),
+due: summary?.pending ? 0 : (summary?.due || 0),
+pending: !summary || Boolean(summary.pending)
+};
+let folderId = deck.folderId || null;
+const seen = new Set();
+while (folderId && !seen.has(folderId)) {
+seen.add(folderId);
+const total = folderSummaries.get(folderId);
+if (total) {
+total.deckCount += contribution.deckCount;
+total.cardCount += contribution.cardCount;
+total.due += contribution.due;
+total.pending ||= contribution.pending;
 }
+folderId = byId.get(folderId)?.parentId || null;
+}
+});
 return folderSummaries;
 }
 function buildSummaries(folders, decks) {
@@ -336,8 +346,10 @@ const run = async () => {
 for (const deckId of missingDeckIds) {
 if (token !== state.summaryHydrationToken || renderSeq !== state.renderSeq) return;
 try {
-const cards = await OituDB.getCardsByDeck(deckId);
-const studied = cards.filter(card => card.reviewStatus).length;
+const cards = OituDB.getCardSummariesByDeck
+? await OituDB.getCardSummariesByDeck(deckId)
+: await OituDB.getCardsByDeck(deckId);
+const studied = cards.filter(card => !isNewCard(card)).length;
 const summary = {
 cardCount: cards.length,
 progress: cards.length ? Math.round((studied / cards.length) * 100) : 0,
@@ -368,8 +380,11 @@ if (state.rendering) { state.rerenderRequested = true; return; }
 const seq = ++state.renderSeq;
 state.rendering = true;
 try {
-await normalizeAnkiPaths();
-const [folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks()]);
+let [folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks()]);
+if (decks.some(deck => String(deck.name).includes("::"))) {
+await normalizeAnkiPaths(decks, folders);
+[folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks()]);
+}
 if (seq !== state.renderSeq) return;
 const validFolderIds = new Set(folders.map(folder => folder.id));
 [...state.expandedFolders].forEach(id => { if (!validFolderIds.has(id)) state.expandedFolders.delete(id); });

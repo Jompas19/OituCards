@@ -29,7 +29,9 @@
     quickEditWasPaused: true,
     editorDeckId: null,
     reviewSettingsDeckId: null,
-    redoMode: "none"
+    redoMode: "none",
+    deckLoads: new Map(),
+    renderToken: 0
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -371,7 +373,9 @@
     if (isNewCard(card)) return false;
     if (!card?.nextReviewAt) return true;
     const due = new Date(card.nextReviewAt);
-    return Number.isNaN(due.getTime()) || due <= endOfToday();
+    const unit = String(card.currentIntervalUnit || "").toLocaleLowerCase("pt-BR");
+    const exact = ["minutes", "minute", "minutos", "minuto", "min", "hours", "hour", "horas", "hora", "h"].includes(unit);
+    return Number.isNaN(due.getTime()) || due <= (exact ? new Date() : endOfToday());
   }
 
   function getCurrentIntervalDays(card) {
@@ -534,6 +538,7 @@
     $("#studyRatingArea").classList.toggle("hidden", !visible);
     $("#studyEditArea").classList.toggle("hidden", !visible);
     $("#studyRevealHint").classList.toggle("hidden", visible);
+    if (visible) window.OituMedia?.hydrate?.($("#studyBack"));
   }
 
   function updateRatingHints() {
@@ -555,14 +560,48 @@
     $("#ratingRepeat").classList.toggle("hidden", keep ? false : !state.allowReview);
   }
 
-  function renderCurrent() {
+  async function ensureStudyCardLoaded(card) {
+    if (!card || typeof card.frontHtml === "string") return card;
+    let load = state.deckLoads.get(card.deckId);
+    if (!load) {
+      load = OituDB.getCardsByDeck(card.deckId);
+      state.deckLoads.set(card.deckId, load);
+    }
+    const cards = await load;
+    const full = cards.find((item) => item.id === card.id);
+    if (full) Object.assign(card, full);
+    return card;
+  }
+
+  function preloadNextDeck() {
+    const next = state.queue[state.currentIndex + 1]?.card;
+    if (!next || typeof next.frontHtml === "string" || state.deckLoads.has(next.deckId)) return;
+    const preload = () => ensureStudyCardLoaded(next).catch(() => {});
+    if (typeof requestIdleCallback === "function") requestIdleCallback(preload, { timeout: 900 });
+    else setTimeout(preload, 80);
+  }
+
+  async function renderCurrent() {
     const entry = currentEntry();
     if (!entry) {
       finishStudy();
       return;
     }
-    $("#studyFront").innerHTML = entry.card.frontHtml || "";
-    $("#studyBack").innerHTML = entry.card.backHtml || "";
+    const token = ++state.renderToken;
+    try {
+      await ensureStudyCardLoaded(entry.card);
+    } catch (error) {
+      console.error("OituCards: não foi possível carregar o flashcard.", error);
+      return;
+    }
+    if (token !== state.renderToken || entry !== currentEntry()) return;
+    if (window.OituMedia?.setHtml) {
+      window.OituMedia.setHtml($("#studyFront"), entry.card.frontHtml || "");
+      window.OituMedia.setHtml($("#studyBack"), entry.card.backHtml || "", { hydrate: false });
+    } else {
+      $("#studyFront").innerHTML = entry.card.frontHtml || "";
+      $("#studyBack").innerHTML = entry.card.backHtml || "";
+    }
     updateRatingControls();
     updateRatingHints();
     setBackVisible(false);
@@ -570,6 +609,7 @@
     $("#studyPrevButton").disabled = state.currentIndex <= 0;
     $("#studyNextButton").disabled = state.currentIndex >= state.queue.length - 1;
     $("#studyCard").focus({ preventScroll: true });
+    preloadNextDeck();
   }
 
   function revealCurrent() {
@@ -736,9 +776,13 @@
     state.sessionActive = false;
     state.quickEditing = false;
     state.redoMode = "none";
+    state.deckLoads = new Map();
+    state.renderToken += 1;
     state.deckId = deckId;
-    state.deck = await OituDB.getDeck(deckId);
-    state.allCards = await OituDB.getCardsByDeck(deckId);
+    [state.deck, state.allCards] = await Promise.all([
+      OituDB.getDeck(deckId),
+      OituDB.getCardSummariesByDeck ? OituDB.getCardSummariesByDeck(deckId) : OituDB.getCardsByDeck(deckId)
+    ]);
     if (!state.deck) {
       alert("Baralho não encontrado.");
       goHome();
@@ -766,15 +810,19 @@
   }
 
   async function resetDeckReviewProgress(cards) {
-    const patch = { reviewStatus: null, lastRating: null, lastReviewedAt: null, reviewCount: 0, currentIntervalDays: null, nextReviewAt: null, ratingHistory: [] };
-    await Promise.all(cards.map((card) => OituDB.updateCard(card.id, patch)));
+    const patch = {
+      reviewStatus: null, lastRating: null, lastReviewedAt: null, reviewCount: 0,
+      currentIntervalDays: null, currentIntervalValue: null, currentIntervalUnit: null,
+      currentIntervalMinutes: null, currentIntervalHours: null, nextReviewAt: null, ratingHistory: []
+    };
+    if (OituDB.resetDeckProgressBatch) await OituDB.resetDeckProgressBatch(cards);
+    else await Promise.all(cards.map((card) => OituDB.updateCard(card.id, patch)));
     cards.forEach((card) => Object.assign(card, patch));
   }
 
   async function startStudyFromConfig(event) {
     event.preventDefault();
     state.deck = await OituDB.getDeck(state.deckId);
-    state.allCards = await OituDB.getCardsByDeck(state.deckId);
     const redoMode = getRedoModeFromUI();
     const pool = eligibleCards();
     if (!pool.length) {
@@ -790,7 +838,6 @@
     }
     if (redoMode === "reset") {
       await resetDeckReviewProgress(state.allCards);
-      state.allCards = await OituDB.getCardsByDeck(state.deckId);
     }
     state.redoMode = redoMode;
     const effectivePool = redoMode === "none" ? eligibleCards(state.allCards) : [...state.allCards];
@@ -834,8 +881,13 @@
     state.queue.forEach((entry) => { if (entry.card.id === cardId) Object.assign(entry.card, patch); });
     const entry = currentEntry();
     if (entry?.card.id === cardId) {
-      $("#studyFront").innerHTML = entry.card.frontHtml || "";
-      $("#studyBack").innerHTML = entry.card.backHtml || "";
+      if (window.OituMedia?.setHtml) {
+        window.OituMedia.setHtml($("#studyFront"), entry.card.frontHtml || "");
+        window.OituMedia.setHtml($("#studyBack"), entry.card.backHtml || "");
+      } else {
+        $("#studyFront").innerHTML = entry.card.frontHtml || "";
+        $("#studyBack").innerHTML = entry.card.backHtml || "";
+      }
       setBackVisible(true);
     }
   }
@@ -963,12 +1015,16 @@
     decoratingHome = true;
     try {
       const rows = [...document.querySelectorAll("#deckList [data-deck-id]")];
-      await Promise.all(rows.map(async (row) => {
+      const decks = await OituDB.getDecks();
+      const byId = new Map(decks.map((deck) => [deck.id, deck]));
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      rows.forEach((row) => {
         const deckId = row.dataset.deckId;
         const info = row.querySelector(".deck-info");
         if (!deckId || !info) return;
-        const cards = await OituDB.getCardsByDeck(deckId);
-        const dueCount = cards.filter(isDueReview).length;
+        const deck = byId.get(deckId);
+        const dueCount = deck?.summaryDate === today ? Math.max(0, Number(deck.dueCount) || 0) : 0;
         let badge = info.querySelector(".review-due-badge");
         if (!badge) {
           badge = document.createElement("span");
@@ -978,7 +1034,7 @@
         const text = dueCount === 1 ? "↻ 1 revisão hoje" : `↻ ${dueCount} revisões hoje`;
         if (badge.textContent !== text) badge.textContent = text;
         badge.classList.toggle("has-due", dueCount > 0);
-      }));
+      });
     } finally {
       decoratingHome = false;
     }

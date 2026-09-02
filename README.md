@@ -277,36 +277,21 @@ Algumas funcionalidades de importação/exportação de Anki dependem de bibliot
 
 ## Situação de desempenho
 
-Para bibliotecas de tamanho normal, a interface atual está estável e responde rapidamente.
+Para bibliotecas de tamanho normal, a interface atual está estável e responde rapidamente. Bibliotecas grandes utilizam resumos, metadados leves e carregamento sob demanda para não depender da leitura prévia de todo o conteúdo.
 
-Também foi possível utilizar sessões de estudo com uma grande quantidade de cards depois que eles já estavam carregados.
+### Bibliotecas extremamente grandes
 
-### Limitação conhecida: bibliotecas extremamente grandes
+A aplicação possui uma camada estrutural específica para o cenário de aproximadamente **10 mil cards**, distribuídos em muitas pastas, subpastas e baralhos menores:
 
-Foi identificado um cenário que ainda merece uma solução estrutural futura:
+- a Home utiliza contadores agregados e não abre o conteúdo dos flashcards;
+- os metadados de revisão ficam separados da frente, do verso e das anotações pesadas;
+- as imagens do Anki são gravadas uma única vez como `Blob`, fora do HTML dos cards;
+- cada imagem é carregada somente quando aparece na frente ou no verso exibido;
+- o estudo combinado monta a fila a partir dos metadados e carrega o conteúdo de apenas um baralho por vez;
+- a estrutura de pastas e baralhos é criada diretamente durante a importação, sem reorganização posterior;
+- cards e mídias são persistidos em lotes limitados, com liberação periódica da interface.
 
-- muitas pastas e subpastas;
-- dezenas de baralhos pequenos;
-- aproximadamente **10 mil cards somados**, especialmente quando alguns possuem imagens.
-
-Nesse cenário, a inicialização da biblioteca pode ficar lenta porque vários componentes precisam calcular quantidade, progresso e revisões a partir dos cards armazenados.
-
-Foram testadas otimizações experimentais para esse problema, mas elas introduziram regressões de usabilidade e foram **integralmente revertidas**.
-
-A v2 mantém a implementação estável anterior.
-
-### Direção correta para uma otimização futura
-
-Quando este ponto for retomado, a prioridade deve ser evitar carregar ou percorrer conteúdo completo de cards somente para montar a Home. Algumas possibilidades:
-
-- armazenar estatísticas agregadas por baralho;
-- atualizar contadores incrementalmente quando um card é criado, removido ou revisado;
-- separar metadados de revisão do conteúdo pesado de frente/verso/imagens;
-- lazy loading de estatísticas e conteúdo;
-- renderização incremental da árvore apenas quando necessário;
-- evitar `getAll()` global e observadores pesados do DOM.
-
-Esse trabalho deve ser feito em uma branch isolada e comparado diretamente com a v2 antes de qualquer merge.
+Com isso, fechar e reabrir o site não exige reler os 10 mil conteúdos nem reconstruir as imagens para apresentar a biblioteca ou preparar uma sessão. O tempo absoluto da importação ainda depende do tamanho total das mídias, do navegador, do dispositivo e da velocidade do armazenamento local.
 
 ---
 
@@ -356,14 +341,12 @@ Toda nova funcionalidade deve nascer da `main` em uma nova branch. Se uma mudan�
 
 A v2 já cobre o ciclo principal de uso. As próximas evoluções podem ser feitas gradualmente, sem necessidade de alterar tudo ao mesmo tempo.
 
-### Desempenho para bibliotecas gigantes
+### Monitoramento de desempenho para bibliotecas gigantes
 
-Principal melhoria estrutural pendente.
-
-- metadados agregados por baralho/pasta;
-- contadores incrementais;
-- carregamento realmente sob demanda;
-- testes com bibliotecas de milhares de cards e imagens antes do merge.
+- manter testes de regressão com 10 mil ou mais cards;
+- acompanhar tempo de descompactação de pacotes com muitas imagens;
+- ajustar os tamanhos dos lotes conforme os resultados em navegadores e dispositivos distintos;
+- preservar o carregamento sob demanda nas futuras funcionalidades.
 
 ### Backup completo do OituCards
 

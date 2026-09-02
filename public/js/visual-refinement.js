@@ -348,51 +348,34 @@
     ].forEach((selector) => simplifyIntervalElement($(selector)));
   }
 
-  function folderDescendants(folderId, folders) {
-    const children = new Map();
-    folders.forEach((folder) => {
-      const parent = folder.parentId || null;
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(folder.id);
-    });
-    const output = [];
-    const visit = (id) => {
-      (children.get(id) || []).forEach((childId) => {
-        output.push(childId);
-        visit(childId);
-      });
-    };
-    visit(folderId);
-    return output;
-  }
-
   async function decorateFolderProgress() {
     if (!$("#homeView")?.classList.contains("active")) return;
     const run = ++folderProgressRun;
     try {
       const [folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks()]);
-      const cardsByDeck = new Map();
-      await Promise.all(decks.map(async (deck) => {
-        cardsByDeck.set(deck.id, await OituDB.getCardsByDeck(deck.id));
-      }));
       if (run !== folderProgressRun) return;
-
-      const decksByFolder = new Map();
+      const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+      const totalsByFolder = new Map(folders.map((folder) => [folder.id, { cards: 0, studied: 0 }]));
       decks.forEach((deck) => {
-        const folderId = deck.folderId || null;
-        if (!decksByFolder.has(folderId)) decksByFolder.set(folderId, []);
-        decksByFolder.get(folderId).push(deck.id);
+        const cards = Math.max(0, Number(deck.cardCount) || 0);
+        const studied = Math.min(cards, Math.max(0, Number(deck.studiedCount) || 0));
+        let folderId = deck.folderId || null;
+        const seen = new Set();
+        while (folderId && !seen.has(folderId)) {
+          seen.add(folderId);
+          const total = totalsByFolder.get(folderId);
+          if (!total) break;
+          total.cards += cards;
+          total.studied += studied;
+          folderId = foldersById.get(folderId)?.parentId || null;
+        }
       });
 
       folders.forEach((folder) => {
         const row = document.querySelector(`[data-folder-id="${CSS.escape(folder.id)}"]`);
         if (!row) return;
-        const ids = new Set([folder.id, ...folderDescendants(folder.id, folders)]);
-        const deckIds = [];
-        ids.forEach((folderId) => deckIds.push(...(decksByFolder.get(folderId) || [])));
-        const cards = deckIds.flatMap((deckId) => cardsByDeck.get(deckId) || []);
-        const studied = cards.filter((card) => Boolean(card.reviewStatus)).length;
-        const progress = cards.length ? Math.round((studied / cards.length) * 100) : 0;
+        const total = totalsByFolder.get(folder.id) || { cards: 0, studied: 0 };
+        const progress = total.cards ? Math.round((total.studied / total.cards) * 100) : 0;
         const main = $(".folder-main", row);
         if (!main) return;
         let progressLine = $(".folder-aggregate-progress", main);

@@ -68,7 +68,7 @@
   }
 
   function loadExport() {
-    loadScript('script[data-oitucards-export]', "js/export.js?v=20260823-1202", "oitucardsExport", "Não foi possível carregar o exportador APKG.");
+    loadScript('script[data-oitucards-export]', "js/export.js?v=20260902-1900", "oitucardsExport", "Não foi possível carregar o exportador APKG.");
   }
 
   function loadVisualPolish() {
@@ -82,7 +82,7 @@
   function loadVisualRefinement() {
     loadScript(
       'script[data-oitucards-visual-refinement]',
-      "js/visual-refinement.js?v=20260823-1403",
+      "js/visual-refinement.js?v=20260902-1900",
       "oitucardsVisualRefinement",
       "Não foi possível carregar o refinamento visual.",
       () => { releaseMobileVisualPatch(); loadVisualPolish(); }
