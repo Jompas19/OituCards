@@ -4,7 +4,7 @@
 
   const DB_NAME = "OituCardsPackageMediaDB";
   const DB_VERSION = 1;
-  const WORKER_URL = "js/package-media-resolver-worker.js?v=20260901-2125";
+  const WORKER_URL = "js/package-media-resolver-worker.js?v=20260901-2155";
   const URL_CACHE_LIMIT = 96;
   const PREWARM_CONCURRENCY = 4;
 
@@ -93,7 +93,7 @@
       const store = tx.objectStore("refs");
       const now = new Date().toISOString();
       for (const ref of refs) {
-        if (!ref?.id || !ref?.zipName) continue;
+        if (!ref?.id || ref?.zipName === undefined || ref?.zipName === null) continue;
         store.put({
           id: ref.id,
           packageId,
@@ -109,6 +109,16 @@
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Falha ao salvar índice de mídia."));
     });
+  }
+
+  function resetWorker(error) {
+    const reason = error instanceof Error ? error : new Error(String(error || "Falha no resolvedor de mídia."));
+    for (const holder of pending.values()) holder.reject(reason);
+    pending.clear();
+    for (const holder of packageLoads.values()) holder.reject(reason);
+    packageLoads.clear();
+    try { worker?.terminate?.(); } catch (_) {}
+    worker = null;
   }
 
   function ensureWorker() {
@@ -135,12 +145,7 @@
         else holder.reject(new Error(message.message || "Falha ao carregar imagem."));
       }
     });
-    worker.addEventListener("error", (event) => {
-      for (const holder of pending.values()) holder.reject(new Error(event?.message || "Falha no resolvedor de mídia."));
-      pending.clear();
-      for (const holder of packageLoads.values()) holder.reject(new Error(event?.message || "Falha no resolvedor de mídia."));
-      packageLoads.clear();
-    });
+    worker.addEventListener("error", (event) => resetWorker(new Error(event?.message || "Falha no resolvedor de mídia.")));
     return worker;
   }
 
@@ -287,6 +292,15 @@
     return true;
   }
 
+  function warmLatestImmediately() {
+    Promise.resolve().then(async () => {
+      try {
+        const recent = await latestPackage();
+        if (recent?.ready) await ensurePackageLoaded(recent.id);
+      } catch (_) {}
+    });
+  }
+
   function init() {
     openDb().catch(() => {});
     if (!patchScaleStorage()) {
@@ -295,15 +309,7 @@
       }, 50);
       setTimeout(() => clearInterval(timer), 10000);
     }
-
-    const warm = async () => {
-      try {
-        const recent = await latestPackage();
-        if (recent?.ready) await ensurePackageLoaded(recent.id);
-      } catch (_) {}
-    };
-    if (typeof requestIdleCallback === "function") requestIdleCallback(() => warm(), { timeout: 1600 });
-    else setTimeout(warm, 250);
+    warmLatestImmediately();
   }
 
   window.OituPackageMedia = {
