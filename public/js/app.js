@@ -190,6 +190,21 @@
     return true;
   }
 
+  function removeDeletedDeckFromHome(row) {
+    if (!row) return false;
+    row.remove();
+    const list = $("#deckList");
+    const hasRows = Boolean(list?.querySelector("[data-deck-id],[data-folder-id]"));
+    $("#emptyState")?.classList.toggle("hidden", hasRows);
+    return true;
+  }
+
+  function scheduleLibraryRefresh() {
+    setTimeout(() => {
+      Promise.resolve(window.OituLibrary?.render?.()).catch((error) => console.warn("OituCards: atualização da biblioteca falhou.", error));
+    }, 0);
+  }
+
   function openCreateDeckModal(origin = "home") {
     state.deckModalMode = "create";
     state.createDeckOrigin = origin;
@@ -372,10 +387,18 @@
           "Excluir baralho?",
           `Todos os flashcards de "${deckName}" serão apagados deste navegador. Esta ação não poderá ser desfeita.`,
           async () => {
-            await OituDB.deleteDeck(deckId);
             closeModal("confirmModal");
-            await renderHome();
-            showToast("Baralho excluído.");
+            removeDeletedDeckFromHome(row);
+            try {
+              if (typeof OituDB.deleteLibraryItems === "function") await OituDB.deleteLibraryItems([deckId], []);
+              else await OituDB.deleteDeck(deckId);
+              showToast("Baralho excluído.");
+              scheduleLibraryRefresh();
+            } catch (error) {
+              console.error("OituCards: falha ao excluir baralho.", error);
+              await renderHome();
+              alert("Não foi possível excluir o baralho. Tente novamente.");
+            }
           }
         );
       }
@@ -397,10 +420,17 @@
           "Excluir flashcard?",
           "Este flashcard será apagado deste navegador. Esta ação não poderá ser desfeita.",
           async () => {
-            await OituDB.deleteCard(cardId);
             closeModal("confirmModal");
-            if (!removeDeletedCardFromView(row)) await renderDeckCards();
-            showToast("Flashcard excluído.");
+            const removed = removeDeletedCardFromView(row);
+            try {
+              await OituDB.deleteCard(cardId);
+              if (!removed) await renderDeckCards();
+              showToast("Flashcard excluído.");
+            } catch (error) {
+              console.error("OituCards: falha ao excluir flashcard.", error);
+              await renderDeckCards();
+              alert("Não foi possível excluir o flashcard. Tente novamente.");
+            }
           }
         );
       }
