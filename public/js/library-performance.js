@@ -3,12 +3,13 @@
   window.__oitucardsLibraryPerformanceBootstrap = true;
 
   const scripts = [
-    ["js/instant-scale-fastpath.js?v=20260901-1925", "oitucardsInstantScaleFastpath"],
-    ["js/library-summary-preinstall.js?v=20260901-1925", "oitucardsLibrarySummaryPreinstall"],
-    ["js/library-entity-snapshot.js?v=20260901-1925", "oitucardsLibraryEntitySnapshot"],
-    ["js/library-render-guard.js?v=20260901-1925", "oitucardsLibraryRenderGuard"],
-    ["js/import-apkg-worker-client.js?v=20260901-2055", "oitucardsApkgWorkerClient"],
-    ["js/library-performance-extras.js?v=20260901-1925", "oitucardsLibraryPerformanceExtras"]
+    ["js/instant-scale-fastpath.js?v=20260901-2140", "oitucardsInstantScaleFastpath"],
+    ["js/library-summary-preinstall.js?v=20260901-2140", "oitucardsLibrarySummaryPreinstall"],
+    ["js/library-entity-snapshot.js?v=20260901-2140", "oitucardsLibraryEntitySnapshot"],
+    ["js/library-render-guard.js?v=20260901-2140", "oitucardsLibraryRenderGuard"],
+    ["js/package-media-storage.js?v=20260901-2140", "oitucardsPackageMediaStorage"],
+    ["js/import-apkg-stream-client.js?v=20260901-2140", "oitucardsApkgStreamClient"],
+    ["js/library-performance-extras.js?v=20260901-2140", "oitucardsLibraryPerformanceExtras"]
   ];
 
   const attrName = (key) => `data-${key.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}`;
