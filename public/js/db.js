@@ -11,6 +11,27 @@
   const REVIEW_RATINGS = ["hard", "medium", "good", "easy"];
   let dbPromise = null;
 
+  // Compatibilidade do rollback: alguns navegadores ficaram com OituCardsDB
+  // na versão 2 após os testes antigos. O código estável usa a versão 1.
+  // Interceptamos somente esse caso para abrir a versão existente sem alterar
+  // o esquema nem apagar dados do usuário.
+  try {
+    const factoryProto = Object.getPrototypeOf(indexedDB);
+    const nativeOpen = factoryProto?.open;
+    if (typeof nativeOpen === "function" && !nativeOpen.__oitucardsLegacyVersionCompat) {
+      const compatOpen = function (name, version) {
+        if (String(name) === DB_NAME && Number(version) === DB_VERSION) {
+          return nativeOpen.call(this, name);
+        }
+        return arguments.length >= 2
+          ? nativeOpen.call(this, name, version)
+          : nativeOpen.call(this, name);
+      };
+      compatOpen.__oitucardsLegacyVersionCompat = true;
+      factoryProto.open = compatOpen;
+    }
+  } catch (_) {}
+
   function normalizeReviewSettings(raw) {
     const source = raw || {};
     const intervals = source.newIntervals || source || {};
@@ -183,34 +204,49 @@
     });
   }
 
-  async function deleteDeck(id) {
+  async function deleteLibraryItems(deckIds = [], folderIds = []) {
+    const uniqueDeckIds = [...new Set((deckIds || []).filter(Boolean))];
+    const uniqueFolderIds = [...new Set((folderIds || []).filter(Boolean))];
+    if (!uniqueDeckIds.length && !uniqueFolderIds.length) return;
+
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(["decks", "cards"], "readwrite");
       const decks = tx.objectStore("decks");
       const cards = tx.objectStore("cards");
-      const index = cards.index("deckId");
-      const range = IDBKeyRange.only(id);
+      const deckIndex = cards.index("deckId");
 
-      decks.delete(id);
+      uniqueFolderIds.forEach((id) => decks.delete(id));
 
-      if (typeof index.getAllKeys === "function") {
-        const keysReq = index.getAllKeys(range);
-        keysReq.onsuccess = () => {
-          for (const key of keysReq.result || []) cards.delete(key);
-        };
-      } else {
-        const cursorReq = index.openCursor(range);
-        cursorReq.onsuccess = (event) => {
-          const cursor = event.target.result;
-          if (cursor) { cursor.delete(); cursor.continue(); }
-        };
-      }
+      uniqueDeckIds.forEach((id) => {
+        decks.delete(id);
+        const range = IDBKeyRange.only(id);
+
+        if (typeof deckIndex.getAllKeys === "function") {
+          const keysReq = deckIndex.getAllKeys(range);
+          keysReq.onsuccess = () => {
+            for (const key of keysReq.result || []) cards.delete(key);
+          };
+        } else {
+          const cursorReq = deckIndex.openCursor(range);
+          cursorReq.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (cursor) {
+              cursor.delete();
+              cursor.continue();
+            }
+          };
+        }
+      });
 
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error("Não foi possível excluir o baralho."));
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível concluir a exclusão."));
     });
+  }
+
+  async function deleteDeck(id) {
+    return deleteLibraryItems([id], []);
   }
 
   async function addFolder(name, parentId = null) {
@@ -277,7 +313,7 @@
   }
 
   async function deleteFolder(id) {
-    await run("decks", "readwrite", (store) => store.delete(id));
+    return deleteLibraryItems([], [id]);
   }
 
   async function addCard(deckId, frontHtml, backHtml) {
@@ -376,7 +412,7 @@
 
   window.OituDB = {
     openDB,
-    addDeck, updateDeck, getDeck, getDecks, deleteDeck,
+    addDeck, updateDeck, getDeck, getDecks, deleteDeck, deleteLibraryItems,
     addFolder, updateFolder, getFolder, getFolders, deleteFolder,
     addCard, updateCard, getCard, getCardsByDeck, deleteCard
   };
