@@ -179,14 +179,21 @@
 
     empty.classList.add("hidden");
     const visibleRows = [...list.querySelectorAll(".compact-card-row")];
-    visibleRows.forEach((item, index) => {
-      const number = item.querySelector(".card-number");
-      if (number) number.textContent = String(index + 1);
-    });
 
     if (!visibleRows.length) {
       list.innerHTML = `<div class="empty-state compact"><p>Nenhum flashcard corresponde à pesquisa.</p></div>`;
+      return true;
     }
+
+    const renumber = () => {
+      visibleRows.forEach((item, index) => {
+        if (!item.isConnected) return;
+        const number = item.querySelector(".card-number");
+        if (number) number.textContent = String(index + 1);
+      });
+    };
+    if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(renumber, { timeout: 500 });
+    else setTimeout(renumber, 0);
     return true;
   }
 
