@@ -87,11 +87,19 @@
     if (!window.OituEditor?.sanitizeHtml || OituEditor.sanitizeHtml.__oitucardsImportFastPath) return;
 
     const originalSanitizeHtml = OituEditor.sanitizeHtml.bind(OituEditor);
-    const patched = function (html) {
-      if (!importState.active) return originalSanitizeHtml(html);
+    const patched = function (html, options) {
+      if (!importState.active) return originalSanitizeHtml(html, options);
 
       const source = String(html ?? "").trim();
       if (!source) return "";
+
+      // A importação principal usa este callback para trocar o src do Anki
+      // por um identificador persistido no IndexedDB. Além de alterar o HTML,
+      // o callback registra a mídia usada em cada baralho; por isso essa rota
+      // não pode perder as opções nem reutilizar uma resposta em cache.
+      if (typeof options?.transformImage === "function") {
+        return originalSanitizeHtml(source, options);
+      }
 
       // Texto sem tags nem entidades HTML é seguro para reutilização direta e
       // evita milhares de passagens desnecessárias pelo parser DOM em APKGs grandes.
@@ -101,7 +109,7 @@
         return importState.sanitizeCache.get(source);
       }
 
-      const sanitized = originalSanitizeHtml(source);
+      const sanitized = originalSanitizeHtml(source, options);
       if (source.length <= 50000) {
         importState.sanitizeCache.set(source, sanitized);
         trimSanitizeCache();
