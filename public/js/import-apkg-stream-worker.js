@@ -1,11 +1,10 @@
-/* OituCards - importação APKG de alto volume com mídia indexada */
-const JSZIP_URL = "https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js";
+/* OituCards - importação APKG por acesso direto às faixas ZIP, sem varrer mídia */
+const FFLATE_URL = "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js";
 const SQLJS_URL = "https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/sql-wasm.min.js";
 const SQLJS_WASM_BASE = "https://cdn.jsdelivr.net/npm/sql.js@1.14.2/dist/";
 const FZSTD_URL = "https://cdn.jsdelivr.net/npm/fzstd@0.1.1/umd/index.js";
-const CARD_BATCH = 900;
-const REF_BATCH = 1500;
-const HOT_MEDIA_LIMIT = 160;
+const CARD_BATCH = 1500;
+const REF_BATCH = 4000;
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const ALLOWED_TAGS = new Set(["div","p","br","b","strong","i","em","u","ul","ol","li","span"]);
 
@@ -14,9 +13,7 @@ let SQLPromise = null;
 let currentJobId = null;
 const ackWaiters = new Map();
 
-function post(type, payload = {}) {
-  self.postMessage({ type, ...payload });
-}
+function post(type, payload = {}) { self.postMessage({ type, ...payload }); }
 
 function waitAck(token, timeout = 120000) {
   return new Promise((resolve, reject) => {
@@ -35,7 +32,7 @@ async function ensureRuntime() {
   if (runtimePromise) return runtimePromise;
   runtimePromise = (async () => {
     post("phase", { progress: 1, message: "Preparando motor de importação..." });
-    importScripts(JSZIP_URL, SQLJS_URL, FZSTD_URL);
+    importScripts(FFLATE_URL, SQLJS_URL, FZSTD_URL);
     if (!SQLPromise) SQLPromise = self.initSqlJs({ locateFile: (file) => `${SQLJS_WASM_BASE}${file}` });
     await SQLPromise;
     post("ready");
@@ -43,41 +40,164 @@ async function ensureRuntime() {
   return runtimePromise;
 }
 
-function extensionOf(name) {
-  return String(name || "").toLowerCase().match(/\.([^.]+)$/)?.[1] || "";
+function u64(view, offset) {
+  if (typeof view.getBigUint64 === "function") {
+    const value = view.getBigUint64(offset, true);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Pacote ZIP grande demais para este navegador.");
+    return Number(value);
+  }
+  const lo = view.getUint32(offset, true);
+  const hi = view.getUint32(offset + 4, true);
+  const value = hi * 4294967296 + lo;
+  if (!Number.isSafeInteger(value)) throw new Error("Pacote ZIP grande demais para este navegador.");
+  return value;
 }
 
+async function blobBytes(blob) { return new Uint8Array(await blob.arrayBuffer()); }
+
+function decodeName(bytes) {
+  try { return new TextDecoder("utf-8").decode(bytes); }
+  catch (_) { return Array.from(bytes, (b) => String.fromCharCode(b)).join(""); }
+}
+
+function parseZip64Extra(extra, needs) {
+  let pos = 0;
+  const out = {};
+  while (pos + 4 <= extra.length) {
+    const view = new DataView(extra.buffer, extra.byteOffset + pos, extra.length - pos);
+    const id = view.getUint16(0, true);
+    const size = view.getUint16(2, true);
+    const start = pos + 4;
+    const end = start + size;
+    if (end > extra.length) break;
+    if (id === 0x0001) {
+      const data = new DataView(extra.buffer, extra.byteOffset + start, size);
+      let off = 0;
+      if (needs.uncompressed && off + 8 <= size) { out.uncompressedSize = u64(data, off); off += 8; }
+      if (needs.compressed && off + 8 <= size) { out.compressedSize = u64(data, off); off += 8; }
+      if (needs.localOffset && off + 8 <= size) { out.localHeaderOffset = u64(data, off); off += 8; }
+      return out;
+    }
+    pos = end;
+  }
+  return out;
+}
+
+async function readZipDirectory(file) {
+  const tailSize = Math.min(file.size, 131072);
+  const tailStart = file.size - tailSize;
+  const tail = await blobBytes(file.slice(tailStart));
+  const tailView = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i -= 1) {
+    if (tailView.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("Diretório ZIP do APKG não encontrado.");
+
+  const eocdAbsolute = tailStart + eocd;
+  let totalEntries = tailView.getUint16(eocd + 10, true);
+  let centralSize = tailView.getUint32(eocd + 12, true);
+  let centralOffset = tailView.getUint32(eocd + 16, true);
+  const zip64 = totalEntries === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff;
+
+  if (zip64) {
+    const locatorBytes = await blobBytes(file.slice(Math.max(0, eocdAbsolute - 64), eocdAbsolute));
+    const locatorView = new DataView(locatorBytes.buffer, locatorBytes.byteOffset, locatorBytes.byteLength);
+    let found = -1;
+    for (let i = 0; i <= locatorBytes.length - 20; i += 1) {
+      if (locatorView.getUint32(i, true) === 0x07064b50) found = i;
+    }
+    if (found < 0) throw new Error("ZIP64 sem localizador reconhecível.");
+    const zip64Offset = u64(locatorView, found + 8);
+    const header = await blobBytes(file.slice(zip64Offset, zip64Offset + 56));
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    if (view.getUint32(0, true) !== 0x06064b50) throw new Error("Cabeçalho ZIP64 inválido.");
+    totalEntries = u64(view, 32);
+    centralSize = u64(view, 40);
+    centralOffset = u64(view, 48);
+  }
+
+  if (centralSize > 96 * 1024 * 1024) throw new Error("Diretório ZIP excessivamente grande.");
+  const bytes = await blobBytes(file.slice(centralOffset, centralOffset + centralSize));
+  const entries = new Map();
+  let pos = 0;
+  let parsed = 0;
+
+  while (pos + 46 <= bytes.length && parsed < totalEntries) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset + pos, bytes.length - pos);
+    if (view.getUint32(0, true) !== 0x02014b50) break;
+    const flags = view.getUint16(8, true);
+    const compressionMethod = view.getUint16(10, true);
+    let compressedSize = view.getUint32(20, true);
+    let uncompressedSize = view.getUint32(24, true);
+    const nameLength = view.getUint16(28, true);
+    const extraLength = view.getUint16(30, true);
+    const commentLength = view.getUint16(32, true);
+    const diskStart = view.getUint16(34, true);
+    let localHeaderOffset = view.getUint32(42, true);
+    const recordLength = 46 + nameLength + extraLength + commentLength;
+    if (pos + recordLength > bytes.length) break;
+    const nameBytes = bytes.subarray(pos + 46, pos + 46 + nameLength);
+    const extra = bytes.subarray(pos + 46 + nameLength, pos + 46 + nameLength + extraLength);
+    const name = decodeName(nameBytes);
+
+    const needs = {
+      uncompressed: uncompressedSize === 0xffffffff,
+      compressed: compressedSize === 0xffffffff,
+      localOffset: localHeaderOffset === 0xffffffff
+    };
+    if (needs.uncompressed || needs.compressed || needs.localOffset) {
+      const z64 = parseZip64Extra(extra, needs);
+      if (needs.uncompressed) uncompressedSize = z64.uncompressedSize;
+      if (needs.compressed) compressedSize = z64.compressedSize;
+      if (needs.localOffset) localHeaderOffset = z64.localHeaderOffset;
+    }
+    if (diskStart !== 0 && diskStart !== 0xffff) throw new Error("ZIP dividido em múltiplos discos não é suportado.");
+    if ([compressedSize, uncompressedSize, localHeaderOffset].every(Number.isFinite)) {
+      entries.set(name, { name, flags, compressionMethod, compressedSize, uncompressedSize, localHeaderOffset });
+    }
+    pos += recordLength;
+    parsed += 1;
+  }
+
+  if (!entries.size) throw new Error("Nenhuma entrada válida encontrada no APKG.");
+  return entries;
+}
+
+async function extractZipEntry(file, entry) {
+  if (!entry) throw new Error("Entrada ZIP ausente.");
+  if (entry.flags & 1) throw new Error("APKG criptografado não é suportado.");
+  const headerBytes = await blobBytes(file.slice(entry.localHeaderOffset, entry.localHeaderOffset + 30));
+  if (headerBytes.length < 30) throw new Error("Cabeçalho ZIP incompleto.");
+  const header = new DataView(headerBytes.buffer, headerBytes.byteOffset, headerBytes.byteLength);
+  if (header.getUint32(0, true) !== 0x04034b50) throw new Error("Cabeçalho ZIP inválido.");
+  const nameLength = header.getUint16(26, true);
+  const extraLength = header.getUint16(28, true);
+  const dataOffset = entry.localHeaderOffset + 30 + nameLength + extraLength;
+  const compressed = await blobBytes(file.slice(dataOffset, dataOffset + entry.compressedSize));
+  if (entry.compressionMethod === 0) return compressed;
+  if (entry.compressionMethod === 8) return self.fflate.inflateSync(compressed);
+  throw new Error(`Compressão ZIP ${entry.compressionMethod} não suportada.`);
+}
+
+function extensionOf(name) { return String(name || "").toLowerCase().match(/\.([^.]+)$/)?.[1] || ""; }
 function normalizeMediaName(value) {
   let name = String(value || "").trim();
   try { name = decodeURIComponent(name); } catch (_) {}
   return name.replace(/^\.\//, "").replace(/^media\//i, "").normalize("NFC");
 }
-
-function isImageName(name) {
-  return ["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(extensionOf(name));
-}
-
+function isImageName(name) { return ["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(extensionOf(name)); }
 function mimeFromName(name) {
-  return ({
-    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif",
-    webp: "image/webp", bmp: "image/bmp", avif: "image/avif", svg: "image/svg+xml"
-  })[extensionOf(name)] || "application/octet-stream";
+  return ({jpg:"image/jpeg",jpeg:"image/jpeg",png:"image/png",gif:"image/gif",webp:"image/webp",bmp:"image/bmp",avif:"image/avif",svg:"image/svg+xml"})[extensionOf(name)] || "application/octet-stream";
 }
-
 function escapeAttr(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return String(value ?? "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
-
 function attrValue(tag, name) {
   const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
   const match = String(tag).match(pattern);
   return match ? (match[1] ?? match[2] ?? match[3] ?? "") : "";
 }
-
 function safeStyle(tag) {
   const raw = attrValue(tag, "style");
   if (!raw) return "";
@@ -95,11 +215,9 @@ function safeStyle(tag) {
   }
   return allowed.join(";");
 }
-
-function sanitizeCardHtml(rawHtml, mediaIds, usedMedia, cardMedia) {
+function sanitizeCardHtml(rawHtml, mediaIds, usedMedia) {
   let source = String(rawHtml || "").replace(/\[sound:([^\]]+)\]/gi, (_m, name) => `🔊 ${String(name || "")}`);
   if (!source.includes("<")) return source;
-
   let out = "";
   let cursor = 0;
   const tagRe = /<!--[\s\S]*?-->|<![^>]*>|<[^>]*>/g;
@@ -109,18 +227,15 @@ function sanitizeCardHtml(rawHtml, mediaIds, usedMedia, cardMedia) {
     cursor = match.index + match[0].length;
     const tag = match[0];
     if (/^<!--|^<!/i.test(tag)) continue;
-
     const closing = tag.match(/^<\s*\/\s*([a-z0-9]+)/i);
     if (closing) {
       const name = closing[1].toLowerCase();
       if (ALLOWED_TAGS.has(name) && name !== "br") out += `</${name}>`;
       continue;
     }
-
     const opening = tag.match(/^<\s*([a-z0-9]+)/i);
     if (!opening) continue;
     const name = opening[1].toLowerCase();
-
     if (name === "img") {
       const rawSrc = attrValue(tag, "src");
       if (/^data:image\/(?:png|jpe?g|gif|webp|bmp|avif);base64,/i.test(rawSrc)) {
@@ -133,34 +248,24 @@ function sanitizeCardHtml(rawHtml, mediaIds, usedMedia, cardMedia) {
         continue;
       }
       let id = mediaIds.get(normalized);
-      if (!id) {
-        id = `media:${crypto.randomUUID()}`;
-        mediaIds.set(normalized, id);
-      }
+      if (!id) { id = `media:${crypto.randomUUID()}`; mediaIds.set(normalized, id); }
       usedMedia.add(normalized);
-      cardMedia?.add(normalized);
       out += `<img data-oitucards-media="${escapeAttr(id)}" src="" loading="lazy" alt="${escapeAttr(normalized)}">`;
       continue;
     }
-
     if (!ALLOWED_TAGS.has(name)) continue;
-    if (name === "br") {
-      out += "<br>";
-      continue;
-    }
+    if (name === "br") { out += "<br>"; continue; }
     const style = safeStyle(tag);
     out += style ? `<${name} style="${escapeAttr(style)}">` : `<${name}>`;
   }
   out += source.slice(cursor);
   return out.trim();
 }
-
 function meaningful(html) {
   const source = String(html || "");
   if (/<img\b/i.test(source)) return true;
   return Boolean(source.replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").trim());
 }
-
 function renderCloze(text, ordinal, answerSide) {
   const target = Number(ordinal) + 1;
   return String(text || "").replace(/\{\{c(\d+)::([\s\S]*?)(?:::(.*?))?\}\}/gi, (_full, number, content, hint) => {
@@ -168,12 +273,10 @@ function renderCloze(text, ordinal, answerSide) {
     return content;
   });
 }
-
 function createCard(fields, ordinal) {
   const clean = fields.map((field) => String(field || ""));
   const first = clean[0] || "";
-  let front;
-  let back;
+  let front, back;
   if (/\{\{c\d+::/i.test(first)) {
     front = renderCloze(first, ordinal, false);
     back = renderCloze(first, ordinal, true);
@@ -188,25 +291,20 @@ function createCard(fields, ordinal) {
   if (!String(back || "").trim() && clean.length === 1) back = clean[0];
   return { frontHtml: front, backHtml: back };
 }
-
 function execRows(db, sql) {
   const result = db.exec(sql);
   if (!result.length) return [];
   const { columns, values } = result[0];
   return values.map((row) => Object.fromEntries(columns.map((column, index) => [column, row[index]])));
 }
-
 function tableExists(db, name) {
   const safe = String(name).replaceAll("'", "''");
   return execRows(db, `select name from sqlite_master where type='table' and name='${safe}'`).length > 0;
 }
-
 function readDeckNames(db) {
   const names = new Map();
   if (tableExists(db, "decks")) {
-    try {
-      execRows(db, "select id, name from decks").forEach((row) => names.set(String(row.id), String(row.name || "Baralho").replaceAll("\u001f", "::")));
-    } catch (_) {}
+    try { execRows(db, "select id, name from decks").forEach((row) => names.set(String(row.id), String(row.name || "Baralho").replaceAll("\u001f", "::"))); } catch (_) {}
   }
   if (!names.size && tableExists(db, "col")) {
     try {
@@ -216,11 +314,8 @@ function readDeckNames(db) {
   }
   return names;
 }
-
 function readVarint(bytes, start) {
-  let value = 0;
-  let shift = 0;
-  let position = start;
+  let value = 0, shift = 0, position = start;
   while (position < bytes.length) {
     const byte = bytes[position++];
     value += (byte & 0x7f) * 2 ** shift;
@@ -230,102 +325,80 @@ function readVarint(bytes, start) {
   }
   throw new Error("Protobuf incompleto.");
 }
-
 function skipProtoField(bytes, wire, position) {
   if (wire === 0) return readVarint(bytes, position).position;
   if (wire === 1) return position + 8;
-  if (wire === 2) {
-    const len = readVarint(bytes, position);
-    return len.position + len.value;
-  }
+  if (wire === 2) { const len = readVarint(bytes, position); return len.position + len.value; }
   if (wire === 5) return position + 4;
   throw new Error(`Tipo protobuf ${wire} não suportado.`);
 }
-
 function parseMediaEntry(bytes) {
   let position = 0;
   const entry = { name: "", size: 0 };
   while (position < bytes.length) {
-    const key = readVarint(bytes, position);
-    position = key.position;
-    const field = Math.floor(key.value / 8);
-    const wire = key.value % 8;
+    const key = readVarint(bytes, position); position = key.position;
+    const field = Math.floor(key.value / 8), wire = key.value % 8;
     if (field === 1 && wire === 2) {
-      const len = readVarint(bytes, position);
-      position = len.position;
-      entry.name = new TextDecoder().decode(bytes.slice(position, position + len.value));
-      position += len.value;
+      const len = readVarint(bytes, position); position = len.position;
+      entry.name = new TextDecoder().decode(bytes.slice(position, position + len.value)); position += len.value;
     } else if (field === 2 && wire === 0) {
-      const val = readVarint(bytes, position);
-      entry.size = val.value;
-      position = val.position;
+      const val = readVarint(bytes, position); entry.size = val.value; position = val.position;
     } else position = skipProtoField(bytes, wire, position);
   }
   return entry;
 }
-
 function parseModernMediaMap(bytes) {
   const entries = [];
   let position = 0;
   while (position < bytes.length) {
-    const key = readVarint(bytes, position);
-    position = key.position;
-    const field = Math.floor(key.value / 8);
-    const wire = key.value % 8;
+    const key = readVarint(bytes, position); position = key.position;
+    const field = Math.floor(key.value / 8), wire = key.value % 8;
     if (field === 1 && wire === 2) {
-      const len = readVarint(bytes, position);
-      position = len.position;
-      const end = position + len.value;
-      entries.push(parseMediaEntry(bytes.slice(position, end)));
-      position = end;
+      const len = readVarint(bytes, position); position = len.position;
+      const end = position + len.value; entries.push(parseMediaEntry(bytes.slice(position, end))); position = end;
     } else position = skipProtoField(bytes, wire, position);
   }
   return entries;
 }
-
-async function readMediaMap(zip, modern) {
+async function readMediaMap(file, zipEntries, modern) {
   const map = new Map();
-  const mediaFile = zip.file("media");
-  if (!mediaFile) return map;
+  const mediaEntry = zipEntries.get("media");
+  if (!mediaEntry) return map;
+  let bytes = await extractZipEntry(file, mediaEntry);
   if (modern) {
-    let bytes = await mediaFile.async("uint8array");
     bytes = self.fzstd.decompress(bytes);
     parseModernMediaMap(bytes).forEach((entry, index) => {
       if (entry.name) map.set(normalizeMediaName(entry.name), { zipName: String(index), size: Number(entry.size) || 0 });
     });
   } else {
     try {
-      const parsed = JSON.parse(await mediaFile.async("string"));
+      const parsed = JSON.parse(new TextDecoder().decode(bytes));
       for (const [zipName, name] of Object.entries(parsed)) {
-        const entry = zip.file(String(zipName));
-        map.set(normalizeMediaName(name), { zipName: String(zipName), size: Number(entry?._data?.uncompressedSize) || 0 });
+        const outer = zipEntries.get(String(zipName));
+        map.set(normalizeMediaName(name), { zipName: String(zipName), size: Number(outer?.uncompressedSize) || 0 });
       }
     } catch (_) {}
   }
   return map;
 }
-
-async function sendAcked(type, payload, token) {
-  post(type, { ...payload, token });
-  await waitAck(token);
-}
+async function sendAcked(type, payload, token) { post(type, { ...payload, token }); await waitAck(token); }
 
 async function runJob(file, jobId) {
   await ensureRuntime();
   currentJobId = jobId;
-  post("phase", { progress: 3, message: "Abrindo pacote do Anki..." });
-  const zip = await self.JSZip.loadAsync(file);
+  post("phase", { progress: 3, message: "Lendo índice do pacote..." });
+  const zipEntries = await readZipDirectory(file);
   if (currentJobId !== jobId) return;
 
-  const modernEntry = zip.file("collection.21b") || zip.file("collection.anki21b");
-  const legacy21 = zip.file("collection.anki21");
-  const legacy2 = zip.file("collection.anki2");
+  const modernEntry = zipEntries.get("collection.21b") || zipEntries.get("collection.anki21b");
+  const legacy21 = zipEntries.get("collection.anki21");
+  const legacy2 = zipEntries.get("collection.anki2");
   const collection = modernEntry || legacy21 || legacy2;
   if (!collection) throw new Error("O pacote não contém uma coleção Anki reconhecível.");
   const modern = Boolean(modernEntry);
 
-  post("phase", { progress: 6, message: modern ? "Descompactando coleção moderna..." : "Lendo coleção..." });
-  let bytes = await collection.async("uint8array");
+  post("phase", { progress: 6, message: modern ? "Abrindo coleção moderna..." : "Abrindo coleção..." });
+  let bytes = await extractZipEntry(file, collection);
   if (modern) bytes = self.fzstd.decompress(bytes);
   const SQL = await SQLPromise;
   const db = new SQL.Database(bytes);
@@ -344,56 +417,42 @@ async function runJob(file, jobId) {
     stmt = db.prepare("select c.did as did, c.ord as ord, n.flds as flds from cards c join notes n on n.id=c.nid order by c.did, c.id");
     const mediaIds = new Map();
     const usedMedia = new Set();
-    const hotMedia = new Set();
-    const hotCardsByDeck = new Map();
     let batch = [];
-    let scanned = 0;
-    let validCount = 0;
-    let batchIndex = 0;
+    let scanned = 0, validCount = 0, batchIndex = 0;
 
     while (stmt.step()) {
       const row = stmt.getAsObject();
       const did = String(row.did);
       const raw = createCard(String(row.flds || "").split("\u001f"), row.ord);
-      const cardMedia = new Set();
-      const frontHtml = sanitizeCardHtml(raw.frontHtml, mediaIds, usedMedia, cardMedia);
-      const backHtml = sanitizeCardHtml(raw.backHtml, mediaIds, usedMedia, cardMedia);
+      const frontHtml = sanitizeCardHtml(raw.frontHtml, mediaIds, usedMedia);
+      const backHtml = sanitizeCardHtml(raw.backHtml, mediaIds, usedMedia);
       scanned += 1;
-
       if (meaningful(frontHtml) && meaningful(backHtml)) {
         batch.push({ did, frontHtml, backHtml });
         validCount += 1;
-        if (cardMedia.size && (hotCardsByDeck.get(did) || 0) < 2 && hotMedia.size < HOT_MEDIA_LIMIT) {
-          for (const name of cardMedia) {
-            if (hotMedia.size >= HOT_MEDIA_LIMIT) break;
-            hotMedia.add(name);
-          }
-          hotCardsByDeck.set(did, (hotCardsByDeck.get(did) || 0) + 1);
-        }
       }
-
       if (batch.length >= CARD_BATCH) {
         const token = `cards:${jobId}:${batchIndex++}`;
         await sendAcked("cardBatch", { cards: batch, done: scanned, total: cardCount, validCount }, token);
         batch = [];
-      } else if (scanned % 1500 === 0) {
+      } else if (scanned % 3000 === 0) {
         post("cardProgress", { done: scanned, total: cardCount, validCount });
       }
     }
-
     if (batch.length) {
       const token = `cards:${jobId}:${batchIndex++}`;
       await sendAcked("cardBatch", { cards: batch, done: scanned, total: cardCount, validCount }, token);
     }
 
-    post("phase", { progress: 88, message: "Indexando imagens do pacote..." });
-    const mediaMap = await readMediaMap(zip, modern);
+    post("phase", { progress: 90, message: "Finalizando índice de mídia..." });
+    const mediaMap = await readMediaMap(file, zipEntries, modern);
     const refs = [];
     let missingMedia = 0;
     for (const name of usedMedia) {
       const info = mediaMap.get(name);
       const id = mediaIds.get(name);
-      if (!info || !id || Number(info.size || 0) > MAX_MEDIA_BYTES) {
+      const outer = info ? zipEntries.get(String(info.zipName)) : null;
+      if (!info || !id || !outer || Number(info.size || outer.uncompressedSize || 0) > MAX_MEDIA_BYTES) {
         missingMedia += 1;
         continue;
       }
@@ -402,8 +461,12 @@ async function runJob(file, jobId) {
         zipName: String(info.zipName),
         name,
         mime: mimeFromName(name),
-        size: Number(info.size) || 0,
-        modern
+        size: Number(info.size) || Number(outer.uncompressedSize) || 0,
+        modern,
+        localHeaderOffset: Number(outer.localHeaderOffset),
+        compressedSize: Number(outer.compressedSize),
+        compressionMethod: Number(outer.compressionMethod) || 0,
+        flags: Number(outer.flags) || 0
       });
     }
 
@@ -413,17 +476,7 @@ async function runJob(file, jobId) {
       await sendAcked("mediaRefs", { refs: chunk, done: Math.min(refs.length, offset + chunk.length), total: refs.length }, token);
     }
 
-    const validRefIds = new Set(refs.map((ref) => ref.id));
-    const hotIds = [...hotMedia].map((name) => mediaIds.get(name)).filter((id) => validRefIds.has(id));
-    post("done", {
-      scanned,
-      total: cardCount,
-      validCount,
-      mediaCount: refs.length,
-      hotIds,
-      missingMedia,
-      modern
-    });
+    post("done", { scanned, total: cardCount, validCount, mediaCount: refs.length, hotIds: [], missingMedia, modern });
   } finally {
     try { stmt?.free(); } catch (_) {}
     db.close();
@@ -438,18 +491,12 @@ self.onmessage = (event) => {
   }
   if (message.type === "ack" && message.token) {
     const waiter = ackWaiters.get(message.token);
-    if (waiter) {
-      ackWaiters.delete(message.token);
-      waiter.resolve();
-    }
+    if (waiter) { ackWaiters.delete(message.token); waiter.resolve(); }
     return;
   }
   if (message.type === "cancel") {
     currentJobId = null;
-    for (const [token, waiter] of ackWaiters) {
-      ackWaiters.delete(token);
-      waiter.reject(new Error("Importação cancelada."));
-    }
+    for (const [token, waiter] of ackWaiters) { ackWaiters.delete(token); waiter.reject(new Error("Importação cancelada.")); }
     return;
   }
   if (message.type === "start" && message.file) {
