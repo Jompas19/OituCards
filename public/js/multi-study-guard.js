@@ -49,14 +49,14 @@
   function loadStudyConfigModalUx() {
     loadScript(
       'script[data-oitucards-study-config-modal-ux]',
-      "js/study-config-modal-ux.js?v=20260901-1525",
+      "js/study-config-modal-ux.js?v=20260902-1200",
       "oitucardsStudyConfigModalUx",
       "Não foi possível carregar o refinamento da preparação de estudo."
     );
   }
 
   function loadLibraryPerformance() {
-    loadScript('script[data-oitucards-library-performance]', "js/library-performance.js?v=20260823-1140", "oitucardsLibraryPerformance", "Não foi possível carregar as otimizações da biblioteca.");
+    loadScript('script[data-oitucards-library-performance]', "js/library-performance.js?v=20260902-1200", "oitucardsLibraryPerformance", "Não foi possível carregar as otimizações da biblioteca.");
   }
 
   function loadLibraryStability() {

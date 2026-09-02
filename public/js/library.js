@@ -7,7 +7,10 @@ createParentFolderId: null,
 addExistingTargetFolderId: null,
 addExistingExpanded: new Set(),
 rendering: false,
-renderSeq: 0
+renderSeq: 0,
+snapshot: null,
+summaryHydrationToken: 0,
+rerenderRequested: false
 };
 const $ = (selector) => document.querySelector(selector);
 let observer = null;
@@ -218,29 +221,50 @@ await OituDB.updateDeck(deck.id, { name: leaf, folderId: parentId });
 }
 return true;
 }
-async function buildSummaries(folders, decks) {
-const deckSummaries = new Map();
-await Promise.all(decks.map(async deck => {
-const cards = await OituDB.getCardsByDeck(deck.id);
-const studied = cards.filter(card => card.reviewStatus).length;
-const progress = cards.length ? Math.round((studied / cards.length) * 100) : 0;
-const due = cards.filter(isDue).length;
-deckSummaries.set(deck.id, { cards, progress, due });
-}));
+function todayKey() {
+const now = new Date();
+return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+}
+function summaryFromDeck(deck) {
+const cardCount = Number(deck.cardCount);
+const studiedCount = Number(deck.studiedCount);
+const dueCount = Number(deck.dueCount);
+if (!Number.isInteger(cardCount) || cardCount < 0 || !Number.isInteger(studiedCount) || studiedCount < 0 || deck.summaryDate !== todayKey()) return null;
+return {
+cardCount,
+progress: cardCount ? Math.round((Math.min(studiedCount, cardCount) / cardCount) * 100) : 0,
+due: Number.isInteger(dueCount) && dueCount >= 0 ? dueCount : 0
+};
+}
+function buildFolderSummaries(folders, decks, deckSummaries) {
 const folderSummaries = new Map();
 for (const folder of folders) {
 const ids = deckIdsForFolder(folder.id, folders, decks);
 let cardCount = 0;
 let due = 0;
+let pending = false;
 ids.forEach(id => {
 const summary = deckSummaries.get(id);
-if (!summary) return;
-cardCount += summary.cards.length;
+if (!summary || summary.pending) { pending = true; return; }
+cardCount += summary.cardCount;
 due += summary.due;
 });
-folderSummaries.set(folder.id, { deckCount: ids.length, cardCount, due });
+folderSummaries.set(folder.id, { deckCount: ids.length, cardCount, due, pending });
 }
-return { deckSummaries, folderSummaries };
+return folderSummaries;
+}
+function buildSummaries(folders, decks) {
+const deckSummaries = new Map();
+const missingDeckIds = [];
+decks.forEach(deck => {
+const summary = summaryFromDeck(deck);
+if (summary) deckSummaries.set(deck.id, summary);
+else {
+deckSummaries.set(deck.id, { cardCount: 0, progress: 0, due: 0, pending: true });
+missingDeckIds.push(deck.id);
+}
+});
+return { deckSummaries, folderSummaries: buildFolderSummaries(folders, decks, deckSummaries), missingDeckIds };
 }
 function updateSelectionBar() {
 const count = state.selected.size;
@@ -258,12 +282,12 @@ if (active) observer.observe(list, { childList: true, subtree: false });
 function renderDeckRow(deck, summary, depth) {
 const selected = isSelected("deck", deck.id);
 const due = summary?.due || 0;
-const cards = summary?.cards || [];
+const cardCount = summary?.cardCount || 0;
 const progress = summary?.progress || 0;
 return `<article class="deck-row library-tree-row library-deck-row ${selected ? "is-selected" : ""}" data-deck-id="${deck.id}" style="--tree-depth:${depth}">
 <div class="library-tree-indent" aria-hidden="true"></div>
 <div class="library-select"><input type="checkbox" data-select-deck="${deck.id}" ${selected ? "checked" : ""} aria-label="Selecionar baralho ${escapeHtml(deck.name)}"></div>
-<div class="deck-main"><button class="deck-name-button" type="button" data-action="edit-deck">${escapeHtml(deck.name)}</button><div class="deck-info"><span>${cards.length} ${cards.length === 1 ? "card" : "cards"}</span><span>Progresso: ${progress}%</span><span class="review-due-badge ${due ? "has-due" : ""}">↻ ${due} ${due === 1 ? "revisão" : "revisões"} hoje</span></div><div class="progress-track" aria-label="Progresso de ${progress}%"><div class="progress-bar" style="width:${progress}%"></div></div></div>
+<div class="deck-main"><button class="deck-name-button" type="button" data-action="edit-deck">${escapeHtml(deck.name)}</button><div class="deck-info"><span>${summary?.pending ? "… cards" : `${cardCount} ${cardCount === 1 ? "card" : "cards"}`}</span><span>Progresso: ${progress}%</span><span class="review-due-badge ${due ? "has-due" : ""}">↻ ${due} ${due === 1 ? "revisão" : "revisões"} hoje</span></div><div class="progress-track" aria-label="Progresso de ${progress}%"><div class="progress-bar" style="width:${progress}%"></div></div></div>
 <div class="deck-actions"><button class="action-button icon-only" type="button" data-action="edit-deck" title="Editar baralho" aria-label="Editar baralho">✎</button><button class="action-button icon-only delete" type="button" data-action="delete-deck" title="Apagar baralho" aria-label="Apagar baralho">🗑</button></div>
 </article>`;
 }
@@ -274,7 +298,7 @@ const due = summary?.due || 0;
 return `<article class="deck-row folder-row library-tree-row ${selected ? "is-selected" : ""} ${expanded ? "is-expanded" : ""}" data-folder-id="${folder.id}" style="--tree-depth:${depth}">
 <div class="library-tree-indent" aria-hidden="true"></div>
 <div class="library-select"><input type="checkbox" data-select-folder="${folder.id}" ${selected ? "checked" : ""} aria-label="Selecionar pasta ${escapeHtml(folder.name)}"></div>
-<div class="deck-main folder-main"><button class="folder-toggle-button" type="button" data-toggle-folder="${folder.id}" aria-expanded="${expanded}"><span class="folder-chevron">${expanded ? "▾" : "▸"}</span><span class="folder-icon">📁</span><span class="folder-name-text">${escapeHtml(folder.name)}</span></button><div class="folder-info"><span>${summary?.deckCount || 0} ${summary?.deckCount === 1 ? "baralho" : "baralhos"}</span><span>${summary?.cardCount || 0} ${summary?.cardCount === 1 ? "card" : "cards"}</span>${due ? `<span class="folder-review-due">↻ ${due} ${due === 1 ? "revisão" : "revisões"} hoje</span>` : ""}${!hasChildren ? `<span class="folder-empty-hint">vazia</span>` : ""}</div></div>
+<div class="deck-main folder-main"><button class="folder-toggle-button" type="button" data-toggle-folder="${folder.id}" aria-expanded="${expanded}"><span class="folder-chevron">${expanded ? "▾" : "▸"}</span><span class="folder-icon">📁</span><span class="folder-name-text">${escapeHtml(folder.name)}</span></button><div class="folder-info"><span>${summary?.deckCount || 0} ${summary?.deckCount === 1 ? "baralho" : "baralhos"}</span><span>${summary?.pending ? "… cards" : `${summary?.cardCount || 0} ${summary?.cardCount === 1 ? "card" : "cards"}`}</span>${due ? `<span class="folder-review-due">↻ ${due} ${due === 1 ? "revisão" : "revisões"} hoje</span>` : ""}${!hasChildren ? `<span class="folder-empty-hint">vazia</span>` : ""}</div></div>
 <div class="deck-actions folder-row-actions"><button class="action-button icon-only" type="button" data-add-existing-folder="${folder.id}" title="Adicionar baralhos existentes" aria-label="Adicionar baralhos existentes">＋</button><button class="action-button icon-only" type="button" data-create-subfolder="${folder.id}" title="Criar subpasta" aria-label="Criar subpasta">▣</button><button class="action-button icon-only folder-study-button" type="button" data-study-folder="${folder.id}" title="Estudar pasta" aria-label="Estudar pasta">▶</button></div>
 </article>`;
 }
@@ -295,8 +319,52 @@ rows.push(renderDeckRow(deck, deckSummaries.get(deck.id), depth));
 renderLevel(null, 0);
 return rows.join("");
 }
+function renderSnapshot() {
+const snapshot = state.snapshot;
+if (!snapshot || !$("#homeView")?.classList.contains("active")) return false;
+setObserver(false);
+$("#deckList").innerHTML = renderTree(snapshot.folders, snapshot.decks, snapshot.deckSummaries, snapshot.folderSummaries) || `<div class="library-empty">Você ainda não possui pastas ou baralhos.</div>`;
+setObserver(true);
+$("#emptyState")?.classList.add("hidden");
+updateSelectionBar();
+return true;
+}
+function scheduleSummaryHydration(missingDeckIds, renderSeq) {
+const token = ++state.summaryHydrationToken;
+if (!missingDeckIds.length) return;
+const run = async () => {
+for (const deckId of missingDeckIds) {
+if (token !== state.summaryHydrationToken || renderSeq !== state.renderSeq) return;
+try {
+const cards = await OituDB.getCardsByDeck(deckId);
+const studied = cards.filter(card => card.reviewStatus).length;
+const summary = {
+cardCount: cards.length,
+progress: cards.length ? Math.round((studied / cards.length) * 100) : 0,
+due: cards.filter(isDue).length
+};
+state.snapshot?.deckSummaries.set(deckId, summary);
+OituDB.updateDeckSummary?.(deckId, {
+cardCount: summary.cardCount,
+studiedCount: studied,
+dueCount: summary.due,
+summaryDate: todayKey()
+}).catch(() => {});
+} catch (error) {
+console.warn("OituCards: não foi possível atualizar o resumo de um baralho.", error);
+}
+await new Promise(resolve => setTimeout(resolve, 0));
+}
+if (token !== state.summaryHydrationToken || renderSeq !== state.renderSeq || !state.snapshot) return;
+state.snapshot.folderSummaries = buildFolderSummaries(state.snapshot.folders, state.snapshot.decks, state.snapshot.deckSummaries);
+renderSnapshot();
+};
+if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(() => run(), { timeout: 1200 });
+else setTimeout(run, 80);
+}
 async function renderLibrary() {
-if (state.rendering || !$("#homeView")?.classList.contains("active")) return;
+if (!$("#homeView")?.classList.contains("active")) return;
+if (state.rendering) { state.rerenderRequested = true; return; }
 const seq = ++state.renderSeq;
 state.rendering = true;
 try {
@@ -305,15 +373,17 @@ const [folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks
 if (seq !== state.renderSeq) return;
 const validFolderIds = new Set(folders.map(folder => folder.id));
 [...state.expandedFolders].forEach(id => { if (!validFolderIds.has(id)) state.expandedFolders.delete(id); });
-const { deckSummaries, folderSummaries } = await buildSummaries(folders, decks);
+const { deckSummaries, folderSummaries, missingDeckIds } = buildSummaries(folders, decks);
 if (seq !== state.renderSeq) return;
-setObserver(false);
-$("#deckList").innerHTML = renderTree(folders, decks, deckSummaries, folderSummaries) || `<div class="library-empty">Você ainda não possui pastas ou baralhos.</div>`;
-setObserver(true);
-$("#emptyState")?.classList.add("hidden");
-updateSelectionBar();
+state.snapshot = { folders, decks, deckSummaries, folderSummaries };
+renderSnapshot();
+scheduleSummaryHydration(missingDeckIds, seq);
 } finally {
 state.rendering = false;
+if (state.rerenderRequested) {
+state.rerenderRequested = false;
+scheduleRender();
+}
 }
 }
 function scheduleRender(delay = 0) {
@@ -323,7 +393,7 @@ renderTimer = setTimeout(() => renderLibrary(), delay);
 function toggleFolder(folderId) {
 if (state.expandedFolders.has(folderId)) state.expandedFolders.delete(folderId);
 else state.expandedFolders.add(folderId);
-scheduleRender();
+renderSnapshot();
 }
 function openCreateFolder(parentId = null) {
 state.createParentFolderId = parentId || null;
@@ -385,7 +455,8 @@ const ids = await resolveSelectedDeckIds();
 await studyDeckIds(ids, "Estudar selecionados");
 }
 async function studyFolder(folderId) {
-const [folders, decks] = await Promise.all([OituDB.getFolders(), OituDB.getDecks()]);
+const folders = state.snapshot?.folders || await OituDB.getFolders();
+const decks = state.snapshot?.decks || await OituDB.getDecks();
 const folder = folders.find(item => item.id === folderId);
 if (!folder) return;
 await studyDeckIds(deckIdsForFolder(folderId, folders, decks), folder.name);

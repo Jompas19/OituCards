@@ -257,7 +257,7 @@
     if (document.querySelector('script[data-oitucards-library-due-sync]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/library-due-sync.js?v=20260831-2155";
+    script.src = "js/library-due-sync.js?v=20260902-1200";
     script.dataset.oitucardsLibraryDueSync = "true";
     script.onerror = () => console.error("Não foi possível sincronizar os indicadores de revisão da biblioteca.");
     document.body.appendChild(script);

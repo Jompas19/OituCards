@@ -3,9 +3,6 @@
   window.__oitucardsLibraryDueSync = true;
 
   const state = {
-    rawCards: null,
-    rawPromise: null,
-    dirty: true,
     syncPromise: null,
     rerunRequested: false,
     dueTimer: null,
@@ -15,93 +12,9 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
 
-  function isNewCard(card) {
-    const count = Number.isInteger(card?.reviewCount)
-      ? card.reviewCount
-      : (card?.lastReviewedAt || card?.nextReviewAt || card?.lastRating ? 1 : 0);
-    return count === 0 && !card?.lastReviewedAt && !card?.nextReviewAt && !card?.lastRating;
-  }
-
-  function dueTime(card) {
-    if (isNewCard(card)) return null;
-    if (!card?.nextReviewAt) return -Infinity;
-    const time = new Date(card.nextReviewAt).getTime();
-    return Number.isNaN(time) ? -Infinity : time;
-  }
-
   function markDirty() {
-    state.dirty = true;
-    state.rawCards = null;
-    state.rawPromise = null;
     clearTimeout(state.dueTimer);
     state.dueTimer = null;
-  }
-
-  async function readRawCards() {
-    if (!state.dirty && state.rawCards) return state.rawCards;
-    if (state.rawPromise) return state.rawPromise;
-
-    state.rawPromise = (async () => {
-      const db = await OituDB.openDB();
-      const cards = await new Promise((resolve, reject) => {
-        const tx = db.transaction("cards", "readonly");
-        const request = tx.objectStore("cards").getAll();
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-        tx.onerror = () => reject(tx.error);
-      });
-      state.rawCards = cards;
-      state.dirty = false;
-      state.rawPromise = null;
-      return cards;
-    })().catch((error) => {
-      state.rawPromise = null;
-      throw error;
-    });
-
-    return state.rawPromise;
-  }
-
-  function buildCounts(cards, decks, folders) {
-    const now = Date.now();
-    const deckDue = new Map(decks.map((deck) => [deck.id, 0]));
-    let nextFuture = null;
-
-    for (const card of cards) {
-      const time = dueTime(card);
-      if (time === null) continue;
-      if (time <= now) {
-        deckDue.set(card.deckId, (deckDue.get(card.deckId) || 0) + 1);
-      } else if (nextFuture === null || time < nextFuture) {
-        nextFuture = time;
-      }
-    }
-
-    const directFolderDue = new Map(folders.map((folder) => [folder.id, 0]));
-    for (const deck of decks) {
-      if (!deck.folderId) continue;
-      directFolderDue.set(
-        deck.folderId,
-        (directFolderDue.get(deck.folderId) || 0) + (deckDue.get(deck.id) || 0)
-      );
-    }
-
-    const byId = new Map(folders.map((folder) => [folder.id, folder]));
-    const folderDue = new Map(folders.map((folder) => [folder.id, directFolderDue.get(folder.id) || 0]));
-
-    for (const folder of folders) {
-      const amount = directFolderDue.get(folder.id) || 0;
-      if (!amount) continue;
-      const seen = new Set([folder.id]);
-      let parentId = folder.parentId || null;
-      while (parentId && !seen.has(parentId)) {
-        seen.add(parentId);
-        folderDue.set(parentId, (folderDue.get(parentId) || 0) + amount);
-        parentId = byId.get(parentId)?.parentId || null;
-      }
-    }
-
-    return { deckDue, folderDue, nextFuture };
   }
 
   function updateDeckBadge(row, due) {
@@ -152,12 +65,30 @@
     }
 
     state.syncPromise = (async () => {
-      const [cards, decks, folders] = await Promise.all([
-        readRawCards(),
-        OituDB.getDecks(),
-        OituDB.getFolders()
-      ]);
-      const counts = buildCounts(cards, decks, folders);
+      const [decks, folders] = await Promise.all([OituDB.getDecks(), OituDB.getFolders()]);
+      const now = new Date();
+      const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const deckDue = new Map(decks.map((deck) => [
+        deck.id,
+        deck.summaryDate === dateKey && Number.isInteger(Number(deck.dueCount)) ? Math.max(0, Number(deck.dueCount)) : 0
+      ]));
+      const counts = { deckDue, folderDue: new Map(), nextFuture: null };
+      const directFolderDue = new Map(folders.map((folder) => [folder.id, 0]));
+      decks.forEach((deck) => {
+        if (deck.folderId) directFolderDue.set(deck.folderId, (directFolderDue.get(deck.folderId) || 0) + (deckDue.get(deck.id) || 0));
+      });
+      const byId = new Map(folders.map((folder) => [folder.id, folder]));
+      counts.folderDue = new Map(folders.map((folder) => [folder.id, directFolderDue.get(folder.id) || 0]));
+      folders.forEach((folder) => {
+        const amount = directFolderDue.get(folder.id) || 0;
+        const seen = new Set([folder.id]);
+        let parentId = folder.parentId || null;
+        while (amount && parentId && !seen.has(parentId)) {
+          seen.add(parentId);
+          counts.folderDue.set(parentId, (counts.folderDue.get(parentId) || 0) + amount);
+          parentId = byId.get(parentId)?.parentId || null;
+        }
+      });
 
       document.querySelectorAll("#deckList [data-deck-id]").forEach((row) => {
         updateDeckBadge(row, counts.deckDue.get(row.dataset.deckId) || 0);
@@ -180,6 +111,14 @@
 
   function scheduleSync(...delays) {
     for (const delay of delays) setTimeout(() => syncBadges().catch(() => {}), delay);
+  }
+
+  function scheduleIdleSync(timeout = 1800) {
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(() => syncBadges().catch(() => {}), { timeout });
+      return;
+    }
+    setTimeout(() => syncBadges().catch(() => {}), Math.min(timeout, 1200));
   }
 
   function patchDatabaseInvalidation() {
@@ -209,7 +148,7 @@
     if (!previousRender.__libraryDueSyncWrapped) {
       const wrappedRender = async function (...args) {
         const result = await previousRender.apply(this, args);
-        await syncBadges().catch(() => {});
+        scheduleIdleSync();
         return result;
       };
       wrappedRender.__libraryDueSyncWrapped = true;
@@ -223,14 +162,13 @@
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
 
-    if (target.closest("[data-toggle-folder]")) scheduleSync(0, 70, 180);
-    if (target.closest("#homeButton,#backHomeButton,#studyHomeButton,#multiHome")) scheduleSync(80, 220, 520);
+    if (target.closest("#homeButton,#backHomeButton,#studyHomeButton,#multiHome")) scheduleIdleSync(2500);
   }
 
   function init() {
     patchDatabaseInvalidation();
     wrapLibrary();
-    scheduleSync(50, 180, 500);
+    scheduleIdleSync(2200);
     setTimeout(() => {
       patchDatabaseInvalidation();
       wrapLibrary();

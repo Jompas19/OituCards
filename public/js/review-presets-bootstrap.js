@@ -84,7 +84,7 @@
     }
     const refresh = document.createElement("script");
     refresh.async = false;
-    refresh.src = "js/import-library-final-refresh.js?v=20260831-0015";
+    refresh.src = "js/import-library-final-refresh.js?v=20260902-1200";
     refresh.dataset.oitucardsImportLibraryFinalRefresh = "true";
     refresh.addEventListener("load", () => {
       refresh.dataset.loaded = "true";
@@ -104,7 +104,7 @@
     }
     const workflow = document.createElement("script");
     workflow.async = false;
-    workflow.src = "js/library-workflow-ux-lite.js?v=20260830-2245";
+    workflow.src = "js/library-workflow-ux-lite.js?v=20260902-1200";
     workflow.dataset.oitucardsLibraryWorkflowUxLite = "true";
     workflow.addEventListener("load", loadImportLibraryFinalRefresh, { once: true });
     workflow.onerror = () => console.error("Não foi possível carregar as melhorias leves da biblioteca.");

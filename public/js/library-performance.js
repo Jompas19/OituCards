@@ -1,14 +1,9 @@
 (function () {
-  const CACHE_TTL_MS = 30000;
   const DEFAULT_EMOJI = "📁";
   const EMOJI_CHOICES = ["📁", "📚", "🧠", "🩺", "🫀", "🧬", "💊", "🦴", "👁️", "🧪", "📖", "⭐", "🎯", "💡", "📝", "🎓"];
   const state = {
     pendingParentId: null,
-    pendingFolderCreate: null,
-    cardCache: null,
-    cardCachePromise: null,
-    cardIdToDeck: new Map(),
-    cacheTimer: null
+    pendingFolderCreate: null
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -22,131 +17,11 @@
     document.head.appendChild(link);
   }
 
-  function cloneCard(card) {
-    return card ? { ...card } : card;
-  }
-
-  function scheduleCacheExpiry() {
-    clearTimeout(state.cacheTimer);
-    state.cacheTimer = setTimeout(() => {
-      state.cardCache = null;
-      state.cardCachePromise = null;
-      state.cardIdToDeck.clear();
-    }, CACHE_TTL_MS);
-  }
-
-  async function readAllCardsOnce() {
-    const db = await OituDB.openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("cards", "readonly");
-      const req = tx.objectStore("cards").getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
-  async function ensureCardCache() {
-    if (state.cardCache) {
-      scheduleCacheExpiry();
-      return state.cardCache;
-    }
-    if (!state.cardCachePromise) {
-      state.cardCachePromise = readAllCardsOnce().then((cards) => {
-        const grouped = new Map();
-        state.cardIdToDeck.clear();
-        for (const card of cards) {
-          const deckId = card.deckId;
-          if (!grouped.has(deckId)) grouped.set(deckId, []);
-          grouped.get(deckId).push(card);
-          state.cardIdToDeck.set(card.id, deckId);
-        }
-        grouped.forEach((items) => items.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)));
-        state.cardCache = grouped;
-        state.cardCachePromise = null;
-        scheduleCacheExpiry();
-        return grouped;
-      }).catch((error) => {
-        state.cardCachePromise = null;
-        throw error;
-      });
-    }
-    return state.cardCachePromise;
-  }
-
   function patchDatabaseReads() {
     if (!window.OituDB || OituDB.__libraryPerformancePatched) return;
     OituDB.__libraryPerformancePatched = true;
 
-    const originalGetCardsByDeck = OituDB.getCardsByDeck.bind(OituDB);
-    const originalAddCard = OituDB.addCard.bind(OituDB);
-    const originalUpdateCard = OituDB.updateCard.bind(OituDB);
-    const originalDeleteCard = OituDB.deleteCard.bind(OituDB);
-    const originalDeleteDeck = OituDB.deleteDeck.bind(OituDB);
     const originalAddFolder = OituDB.addFolder.bind(OituDB);
-
-    OituDB.getCardsByDeck = async (deckId) => {
-      try {
-        const cache = await ensureCardCache();
-        return (cache.get(deckId) || []).map(cloneCard);
-      } catch (error) {
-        console.warn("OituCards: cache da biblioteca indisponível; usando leitura normal.", error);
-        return originalGetCardsByDeck(deckId);
-      }
-    };
-
-    OituDB.addCard = async (...args) => {
-      const card = await originalAddCard(...args);
-      if (state.cardCache) {
-        if (!state.cardCache.has(card.deckId)) state.cardCache.set(card.deckId, []);
-        state.cardCache.get(card.deckId).push(card);
-        state.cardIdToDeck.set(card.id, card.deckId);
-        scheduleCacheExpiry();
-      }
-      return card;
-    };
-
-    OituDB.updateCard = async (id, patch) => {
-      const updated = await originalUpdateCard(id, patch);
-      if (state.cardCache) {
-        const oldDeckId = state.cardIdToDeck.get(id);
-        if (oldDeckId && oldDeckId !== updated.deckId) {
-          const oldList = state.cardCache.get(oldDeckId) || [];
-          state.cardCache.set(oldDeckId, oldList.filter((card) => card.id !== id));
-        }
-        const deckId = updated.deckId;
-        const list = state.cardCache.get(deckId) || [];
-        const index = list.findIndex((card) => card.id === id);
-        if (index >= 0) list[index] = updated;
-        else list.push(updated);
-        state.cardCache.set(deckId, list);
-        state.cardIdToDeck.set(id, deckId);
-        scheduleCacheExpiry();
-      }
-      return updated;
-    };
-
-    OituDB.deleteCard = async (id) => {
-      const deckId = state.cardIdToDeck.get(id);
-      const result = await originalDeleteCard(id);
-      if (state.cardCache && deckId) {
-        const list = state.cardCache.get(deckId) || [];
-        state.cardCache.set(deckId, list.filter((card) => card.id !== id));
-        state.cardIdToDeck.delete(id);
-        scheduleCacheExpiry();
-      }
-      return result;
-    };
-
-    OituDB.deleteDeck = async (deckId) => {
-      const result = await originalDeleteDeck(deckId);
-      if (state.cardCache) {
-        for (const card of state.cardCache.get(deckId) || []) state.cardIdToDeck.delete(card.id);
-        state.cardCache.delete(deckId);
-        scheduleCacheExpiry();
-      }
-      return result;
-    };
 
     OituDB.addFolder = async (...args) => {
       const [name, parentId = null] = args;
@@ -160,8 +35,6 @@
       state.pendingFolderCreate = null;
       return OituDB.updateFolder(folder.id, { emoji: pending.emoji });
     };
-
-    ensureCardCache().catch(() => {});
   }
 
   function emojiResult(value) {

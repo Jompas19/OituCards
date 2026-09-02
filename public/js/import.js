@@ -899,6 +899,7 @@
 
   async function bulkInsertCards(deckId, cards, progressStart, progressEnd, overallLabel) {
     const db = await openDirectDb();
+    const storedCards = [];
     try {
       for (let offset = 0; offset < cards.length; offset += CARD_CHUNK_SIZE) {
         const chunk = cards.slice(offset, offset + CARD_CHUNK_SIZE);
@@ -907,7 +908,7 @@
           const store = tx.objectStore("cards");
           const now = new Date().toISOString();
           chunk.forEach((card, localIndex) => {
-            store.add({
+            const storedCard = {
               id: crypto.randomUUID(),
               deckId,
               frontHtml: card.frontHtml,
@@ -915,7 +916,9 @@
               reviewStatus: null,
               createdAt: new Date(Date.now() + offset + localIndex).toISOString(),
               updatedAt: now
-            });
+            };
+            storedCards.push(storedCard);
+            store.add(storedCard);
           });
           tx.oncomplete = resolve;
           tx.onerror = () => reject(tx.error);
@@ -929,6 +932,7 @@
     } finally {
       db.close();
     }
+    return storedCards;
   }
 
   async function persistDecks(decks) {
@@ -945,8 +949,18 @@
       const deck = await OituDB.addDeck(uniqueName);
       const start = 68 + (index / validDecks.length) * 30;
       const end = 68 + ((index + 1) / validDecks.length) * 30;
-      await bulkInsertCards(deck.id, sourceDeck.cards, start, end, `Gravando ${uniqueName}`);
-      await OituDB.updateDeck(deck.id, { importedAt: new Date().toISOString(), importSource: extensionOf(state.file?.name) || "arquivo" });
+      const storedCards = await bulkInsertCards(deck.id, sourceDeck.cards, start, end, `Gravando ${uniqueName}`);
+      const now = new Date();
+      const summaryDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      await OituDB.updateDeck(deck.id, {
+        importedAt: now.toISOString(),
+        importSource: extensionOf(state.file?.name) || "arquivo",
+        cardCount: storedCards.length,
+        studiedCount: 0,
+        dueCount: 0,
+        summaryDate
+      });
+      OituDB.seedCardsByDeck?.(deck.id, storedCards);
       importedCards += sourceDeck.cards.length;
       createdNames.push(uniqueName);
     }
