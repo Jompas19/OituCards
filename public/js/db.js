@@ -11,6 +11,27 @@
   const REVIEW_RATINGS = ["hard", "medium", "good", "easy"];
   let dbPromise = null;
 
+  // Única compatibilidade do rollback: durante os testes o navegador pôde
+  // elevar OituCardsDB para v2. O código restaurado pede v1 explicitamente.
+  // Interceptamos somente esse caso e abrimos a versão existente, sem mudar
+  // esquema, dados ou qualquer comportamento da aplicação.
+  try {
+    const factoryProto = Object.getPrototypeOf(indexedDB);
+    const nativeOpen = factoryProto?.open;
+    if (typeof nativeOpen === "function" && !nativeOpen.__oitucardsLegacyVersionCompat) {
+      const compatOpen = function (name, version) {
+        if (String(name) === DB_NAME && Number(version) === DB_VERSION) {
+          return nativeOpen.call(this, name);
+        }
+        return arguments.length >= 2
+          ? nativeOpen.call(this, name, version)
+          : nativeOpen.call(this, name);
+      };
+      compatOpen.__oitucardsLegacyVersionCompat = true;
+      factoryProto.open = compatOpen;
+    }
+  } catch (_) {}
+
   function normalizeReviewSettings(raw) {
     const source = raw || {};
     const intervals = source.newIntervals || source || {};
@@ -87,7 +108,7 @@
   function openDB() {
     if (dbPromise) return dbPromise;
     dbPromise = new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME);
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
         if (!db.objectStoreNames.contains("decks")) {
