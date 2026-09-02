@@ -160,6 +160,36 @@
     `).join("");
   }
 
+  function removeDeletedCardFromView(row) {
+    const list = $("#cardList");
+    const empty = $("#deckEmptyState");
+    const meta = $("#deckMeta");
+    const countMatch = String(meta?.textContent || "").match(/^(\d+)/);
+    if (!list || !empty || !row || !countMatch) return false;
+
+    const total = Math.max(0, Number.parseInt(countMatch[1], 10) - 1);
+    meta.textContent = `${total} ${total === 1 ? "flashcard" : "flashcards"}`;
+    row.remove();
+
+    if (total === 0) {
+      list.innerHTML = "";
+      empty.classList.remove("hidden");
+      return true;
+    }
+
+    empty.classList.add("hidden");
+    const visibleRows = [...list.querySelectorAll(".compact-card-row")];
+    visibleRows.forEach((item, index) => {
+      const number = item.querySelector(".card-number");
+      if (number) number.textContent = String(index + 1);
+    });
+
+    if (!visibleRows.length) {
+      list.innerHTML = `<div class="empty-state compact"><p>Nenhum flashcard corresponde à pesquisa.</p></div>`;
+    }
+    return true;
+  }
+
   function openCreateDeckModal(origin = "home") {
     state.deckModalMode = "create";
     state.createDeckOrigin = origin;
@@ -369,7 +399,7 @@
           async () => {
             await OituDB.deleteCard(cardId);
             closeModal("confirmModal");
-            await renderDeckCards();
+            if (!removeDeletedCardFromView(row)) await renderDeckCards();
             showToast("Flashcard excluído.");
           }
         );
