@@ -137,12 +137,17 @@
     importState.sanitizeCache.clear();
   }
 
-  function inspectImportStatus() {
+  function importFinishedInUi() {
     const status = document.querySelector("#importStatus");
-    if (!status || !importState.active) return;
+    if (!status) return false;
     const text = String(status.textContent || "").trim();
     const tone = String(status.dataset.tone || "");
-    if (/\bcard(s)? importado(s)?\b/i.test(text) || tone === "error") finishImportSession();
+    return /\bcard(s)? importado(s)?\b/i.test(text) || tone === "error";
+  }
+
+  function inspectImportStatus() {
+    if (!importState.active || !importFinishedInUi()) return;
+    finishImportSession();
   }
 
   function attachImportStatusObserver() {
@@ -166,6 +171,22 @@
       if (!event.target.closest("#confirmImportButton")) return;
       beginImportSession();
     }, true);
+  }
+
+  // A atualização final da biblioteca também observa #importStatus. Como esse
+  // observer pode executar antes do observer acima, o primeiro render podia
+  // consultar o snapshot pré-importação e exibir caminhos Anki com "::" até
+  // um F5. Liberamos o snapshot de forma síncrona no próprio ponto de render,
+  // mas somente quando a UI já confirmou que a importação terminou.
+  function patchPostImportLibraryRender() {
+    if (!window.OituLibrary?.render || OituLibrary.render.__oitucardsImportSnapshotRelease) return;
+    const originalRender = OituLibrary.render.bind(OituLibrary);
+    const patchedRender = function (...args) {
+      if (importState.active && importFinishedInUi()) finishImportSession();
+      return originalRender(...args);
+    };
+    patchedRender.__oitucardsImportSnapshotRelease = true;
+    OituLibrary.render = patchedRender;
   }
 
   function patchJsZip(JSZip) {
@@ -196,6 +217,12 @@
   patchFastImportSanitizer();
   patchImportDeckSnapshot();
   installImportSessionHooks();
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", patchPostImportLibraryRender, { once: true });
+  } else {
+    patchPostImportLibraryRender();
+  }
 
   if (window.JSZip) {
     window.JSZip = patchJsZip(window.JSZip);
