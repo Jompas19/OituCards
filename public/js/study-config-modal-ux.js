@@ -17,6 +17,7 @@
 
   let lastSourceViewId = "homeView";
   let lastSourceScrollY = 0;
+  let currentEditorDeckId = null;
   const installed = new Set();
 
   function activeSourceView() {
@@ -31,6 +32,54 @@
       lastSourceViewId = source.id;
       lastSourceScrollY = window.scrollY || 0;
     }
+  }
+
+  function ensureWorkflowStyles() {
+    if (document.getElementById("studyWorkflowRefinementStyles")) return;
+    const style = document.createElement("style");
+    style.id = "studyWorkflowRefinementStyles";
+    style.textContent = `
+      #studyReviewSettingRow,
+      #multiRepeatRow{display:none!important}
+      #startDeckStudyButton{white-space:nowrap}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureDeckStudyButton() {
+    const actions = document.querySelector("#deckView .heading-actions");
+    if (!actions || document.getElementById("startDeckStudyButton")) return Boolean(actions);
+    const button = document.createElement("button");
+    button.id = "startDeckStudyButton";
+    button.className = "button secondary";
+    button.type = "button";
+    button.textContent = "▶ Iniciar estudo";
+    button.title = "Preparar estudo deste baralho";
+    actions.prepend(button);
+    return true;
+  }
+
+  function forceRepeatEnabled(formId) {
+    if (formId === "studyConfigForm") {
+      const checkbox = document.querySelector("#studyReviewCheckbox");
+      if (checkbox) checkbox.checked = true;
+      return;
+    }
+    if (formId === "multiConfigForm") {
+      const checkbox = document.querySelector("#multiRepeat");
+      if (checkbox) checkbox.checked = true;
+    }
+  }
+
+  function returnToDeckEditor() {
+    const configView = document.getElementById("studyConfigView");
+    const sourceId = configView?.dataset.studyConfigSource || lastSourceViewId;
+    if (sourceId !== "deckView") return false;
+
+    document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+    document.getElementById("deckView")?.classList.add("active");
+    window.scrollTo({ top: lastSourceScrollY, behavior: "instant" });
+    return true;
   }
 
   function ensureCloseButton(config, view) {
@@ -107,7 +156,10 @@
 
   function installAll(attempt = 0) {
     const ready = CONFIGS.every((config) => installConfig(config));
-    if (!ready && attempt < 120) setTimeout(() => installAll(attempt + 1), 50);
+    ensureDeckStudyButton();
+    if ((!ready || !document.getElementById("startDeckStudyButton")) && attempt < 120) {
+      setTimeout(() => installAll(attempt + 1), 50);
+    }
   }
 
   function prepareLogoTransition(attempt = 0) {
@@ -143,6 +195,42 @@
     setTimeout(markReady, 0);
   }
 
+  function handleWorkflowClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    const editDeckButton = target.closest('[data-action="edit-deck"]');
+    const editDeckRow = editDeckButton?.closest("[data-deck-id]");
+    if (editDeckButton && editDeckRow && !editDeckButton.classList.contains("deck-name-button")) {
+      currentEditorDeckId = editDeckRow.dataset.deckId || null;
+    }
+
+    if (target.closest(".deck-name-button")) currentEditorDeckId = null;
+
+    if (target.closest("#startDeckStudyButton")) {
+      if (!currentEditorDeckId || !window.OituStudy?.openConfig) return;
+      event.preventDefault();
+      window.OituStudy.openConfig(currentEditorDeckId);
+      return;
+    }
+
+    const singleConfigClose = target.closest("#studyConfigBackButton,#cancelStudyConfigButton,#studyConfigView .study-config-window-close");
+    if (singleConfigClose && document.getElementById("studyConfigView")?.classList.contains("active")) {
+      const sourceId = document.getElementById("studyConfigView")?.dataset.studyConfigSource || lastSourceViewId;
+      if (sourceId === "deckView") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        returnToDeckEditor();
+      }
+    }
+  }
+
+  function handleConfigSubmit(event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.id === "studyConfigForm" || form.id === "multiConfigForm") forceRepeatEnabled(form.id);
+  }
+
   function handleKeydown(event) {
     if (event.key !== "Escape") return;
     const config = CONFIGS.find((item) => document.getElementById(item.viewId)?.classList.contains("active"));
@@ -151,7 +239,10 @@
     document.querySelector(config.cancelSelector)?.click();
   }
 
+  ensureWorkflowStyles();
   document.addEventListener("click", rememberSource, true);
+  document.addEventListener("click", handleWorkflowClick, true);
+  document.addEventListener("submit", handleConfigSubmit, true);
   document.addEventListener("keydown", handleKeydown, true);
 
   if (document.readyState === "loading") {
