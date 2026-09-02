@@ -289,11 +289,8 @@
     if (!folder) return null;
     const ids = new Set([folderId, ...descendantFolderIds(folderId, folders)]);
     const affectedDecks = decks.filter((deck) => ids.has(deck.folderId || null));
-    let cardCount = 0;
-    for (const deck of affectedDecks) {
-      const cards = await OituDB.getCardsByDeck(deck.id);
-      cardCount += cards.length;
-    }
+    const cardGroups = await Promise.all(affectedDecks.map((deck) => OituDB.getCardsByDeck(deck.id)));
+    const cardCount = cardGroups.reduce((total, cards) => total + cards.length, 0);
     return {
       folder,
       folders,
@@ -333,9 +330,45 @@
   }
 
   async function deleteFolderTree(info) {
-    for (const deck of info.affectedDecks) await OituDB.deleteDeck(deck.id);
-    const ordered = [...info.folderIds].sort((a, b) => folderDepth(b, info.folders) - folderDepth(a, info.folders));
+    const deckIds = info.affectedDecks.map((deck) => deck.id);
+    const folderIds = [...info.folderIds];
+    if (typeof OituDB.deleteLibraryItems === "function") {
+      await OituDB.deleteLibraryItems(deckIds, folderIds);
+      return;
+    }
+
+    for (const deckId of deckIds) await OituDB.deleteDeck(deckId);
+    const ordered = folderIds.sort((a, b) => folderDepth(b, info.folders) - folderDepth(a, info.folders));
     for (const folderId of ordered) await OituDB.deleteFolder(folderId);
+  }
+
+  function removePendingRows(pending) {
+    const list = $("#deckList");
+    if (!list) return;
+    const deckIds = pending.type === "deck"
+      ? [pending.id]
+      : pending.info.affectedDecks.map((deck) => deck.id);
+    const folderIds = pending.type === "folder" ? [...pending.info.folderIds] : [];
+
+    deckIds.forEach((id) => list.querySelector(`[data-deck-id="${CSS.escape(id)}"]`)?.remove());
+    folderIds.forEach((id) => list.querySelector(`[data-folder-id="${CSS.escape(id)}"]`)?.remove());
+
+    const hasRows = Boolean(list.querySelector("[data-deck-id],[data-folder-id]"));
+    $("#emptyState")?.classList.toggle("hidden", hasRows);
+  }
+
+  function showHomeInstantly() {
+    document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+    $("#homeView")?.classList.add("active");
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  function scheduleLibrarySync(delay = 0) {
+    setTimeout(() => {
+      Promise.resolve(window.OituLibrary?.render?.()).catch((error) => {
+        console.warn("OituCards: sincronização da biblioteca após exclusão falhou.", error);
+      });
+    }, delay);
   }
 
   async function confirmPendingDelete() {
@@ -344,28 +377,33 @@
     state.pendingDelete = null;
     const accept = $("#directDeleteConfirmAccept");
     if (accept) accept.disabled = true;
+
+    const wasDeckView = $("#deckView")?.classList.contains("active");
+    closeModal("directDeleteConfirmModal");
+    if (pending.type === "folder") closeModal("folderEditModal");
+    removePendingRows(pending);
+    if (pending.type === "deck" && wasDeckView) showHomeInstantly();
+
     try {
       if (pending.type === "deck") {
-        await OituDB.deleteDeck(pending.id);
-        closeModal("directDeleteConfirmModal");
+        if (typeof OituDB.deleteLibraryItems === "function") await OituDB.deleteLibraryItems([pending.id], []);
+        else await OituDB.deleteDeck(pending.id);
         state.editingDeckId = null;
-        $("#homeButton")?.click();
-        setTimeout(() => window.OituLibrary?.render?.(), 30);
         showToast("Baralho excluído.");
+        scheduleLibrarySync(0);
         return;
       }
 
       if (pending.type === "folder") {
         await deleteFolderTree(pending.info);
-        closeModal("directDeleteConfirmModal");
-        closeModal("folderEditModal");
         if (state.editingFolderId === pending.id) state.editingFolderId = null;
-        await window.OituLibrary?.render?.();
         showToast(pending.info.subfolderCount ? "Pasta e conteúdo excluídos." : "Pasta excluída.");
+        scheduleLibrarySync(0);
       }
     } catch (error) {
       console.error("OituCards: falha ao excluir item.", error);
       alert("Não foi possível concluir a exclusão. Tente novamente.");
+      scheduleLibrarySync(0);
     } finally {
       if (accept) accept.disabled = false;
     }
