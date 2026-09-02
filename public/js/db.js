@@ -299,28 +299,39 @@
       const decks = tx.objectStore("decks");
       const cards = tx.objectStore("cards");
       const deckIndex = cards.index("deckId");
+      const DELETE_BATCH_SIZE = 400;
+
+      const deleteDeckCardsInBatches = (deckId) => {
+        const range = IDBKeyRange.only(deckId);
+
+        if (typeof deckIndex.getAllKeys === "function") {
+          const deleteNextBatch = () => {
+            const keysReq = deckIndex.getAllKeys(range, DELETE_BATCH_SIZE);
+            keysReq.onsuccess = () => {
+              const keys = keysReq.result || [];
+              keys.forEach((key) => cards.delete(key));
+              if (keys.length === DELETE_BATCH_SIZE) deleteNextBatch();
+            };
+          };
+          deleteNextBatch();
+          return;
+        }
+
+        const cursorReq = deckIndex.openCursor(range);
+        cursorReq.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            cursor.delete();
+            cursor.continue();
+          }
+        };
+      };
 
       uniqueFolderIds.forEach((id) => decks.delete(id));
 
       uniqueDeckIds.forEach((id) => {
         decks.delete(id);
-        const range = IDBKeyRange.only(id);
-
-        if (typeof deckIndex.getAllKeys === "function") {
-          const keysReq = deckIndex.getAllKeys(range);
-          keysReq.onsuccess = () => {
-            for (const key of keysReq.result || []) cards.delete(key);
-          };
-        } else {
-          const cursorReq = deckIndex.openCursor(range);
-          cursorReq.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (cursor) {
-              cursor.delete();
-              cursor.continue();
-            }
-          };
-        }
+        deleteDeckCardsInBatches(id);
       });
 
       tx.oncomplete = () => {

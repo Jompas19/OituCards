@@ -10,7 +10,7 @@
     if (document.querySelector('script[data-oitucards-direct-delete-actions]')) return;
     const script = document.createElement("script");
     script.async = false;
-    script.src = "js/direct-delete-actions.js?v=20260830-2255";
+    script.src = "js/direct-delete-actions.js?v=20260902-1400";
     script.dataset.oitucardsDirectDeleteActions = "true";
     script.onerror = () => console.error("Não foi possível carregar as ações diretas de exclusão.");
     document.body.appendChild(script);

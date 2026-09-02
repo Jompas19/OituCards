@@ -9,6 +9,15 @@
 
   const $ = (selector) => document.querySelector(selector);
 
+  function setActionLoading(active, label = "Processando ação") {
+    const indicator = $("#actionLoadingIndicator");
+    if (!indicator) return;
+    indicator.setAttribute("aria-label", label);
+    indicator.classList.toggle("hidden", !active);
+  }
+
+  window.OituActionFeedback = { setLoading: setActionLoading };
+
   function showToast(message) {
     const toast = $("#toast");
     toast.textContent = message;
@@ -396,15 +405,21 @@
           async () => {
             closeModal("confirmModal");
             removeDeletedDeckFromHome(row);
+            window.OituLibrary?.removeItemsInstantly?.([deckId], []);
+            setActionLoading(true, "Excluindo baralho");
             try {
               if (typeof OituDB.deleteLibraryItems === "function") await OituDB.deleteLibraryItems([deckId], []);
               else await OituDB.deleteDeck(deckId);
+              setActionLoading(false);
               showToast("Baralho excluído.");
               scheduleLibraryRefresh();
             } catch (error) {
+              setActionLoading(false);
               console.error("OituCards: falha ao excluir baralho.", error);
               await renderHome();
               alert("Não foi possível excluir o baralho. Tente novamente.");
+            } finally {
+              setActionLoading(false);
             }
           }
         );

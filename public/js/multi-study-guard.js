@@ -120,7 +120,7 @@
   }
 
   function loadReviewModels() {
-    loadScript('script[data-oitucards-review-models]', "js/review-presets-bootstrap.js?v=20260831-2205", "oitucardsReviewModels", "Não foi possível carregar os modelos de revisão.");
+    loadScript('script[data-oitucards-review-models]', "js/review-presets-bootstrap.js?v=20260902-1400", "oitucardsReviewModels", "Não foi possível carregar os modelos de revisão.");
   }
 
   function loadReviewFinalAuthority(attempt = 0) {

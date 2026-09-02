@@ -84,7 +84,7 @@
     }
     const refresh = document.createElement("script");
     refresh.async = false;
-    refresh.src = "js/import-library-final-refresh.js?v=20260902-1200";
+    refresh.src = "js/import-library-final-refresh.js?v=20260902-1400";
     refresh.dataset.oitucardsImportLibraryFinalRefresh = "true";
     refresh.addEventListener("load", () => {
       refresh.dataset.loaded = "true";

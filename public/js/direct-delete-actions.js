@@ -121,6 +121,10 @@
     showToast.timer = setTimeout(() => toast.classList.add("hidden"), 2600);
   }
 
+  function setActionLoading(active, label = "Processando ação") {
+    window.OituActionFeedback?.setLoading?.(active, label);
+  }
+
   function openModal(id) {
     const modal = $(`#${id}`);
     if (!modal) return;
@@ -289,8 +293,10 @@
     if (!folder) return null;
     const ids = new Set([folderId, ...descendantFolderIds(folderId, folders)]);
     const affectedDecks = decks.filter((deck) => ids.has(deck.folderId || null));
-    const cardGroups = await Promise.all(affectedDecks.map((deck) => OituDB.getCardsByDeck(deck.id)));
-    const cardCount = cardGroups.reduce((total, cards) => total + cards.length, 0);
+    const counts = affectedDecks.map((deck) => Number.isInteger(deck.cardCount) && deck.cardCount >= 0 ? deck.cardCount : null);
+    const cardCount = counts.every((count) => count !== null)
+      ? counts.reduce((total, count) => total + count, 0)
+      : null;
     return {
       folder,
       folders,
@@ -304,10 +310,12 @@
   async function requestDeckDelete(deckId) {
     const deck = await OituDB.getDeck(deckId);
     if (!deck) return;
-    const cards = await OituDB.getCardsByDeck(deckId);
+    const cardCount = Number.isInteger(deck.cardCount) && deck.cardCount >= 0 ? deck.cardCount : null;
     state.pendingDelete = { type: "deck", id: deckId, name: deck.name };
     $("#directDeleteConfirmTitle").textContent = "Excluir baralho?";
-    $("#directDeleteConfirmMessage").textContent = `O baralho “${deck.name}” será apagado com ${cards.length} ${cards.length === 1 ? "flashcard" : "flashcards"}.`;
+    $("#directDeleteConfirmMessage").textContent = cardCount === null
+      ? `O baralho “${deck.name}” e todos os seus flashcards serão apagados.`
+      : `O baralho “${deck.name}” será apagado com ${cardCount} ${cardCount === 1 ? "flashcard" : "flashcards"}.`;
     $("#directDeleteConfirmWarning").textContent = "Todos os flashcards deste baralho serão apagados deste navegador. Esta ação não poderá ser desfeita.";
     openModal("directDeleteConfirmModal");
   }
@@ -320,7 +328,7 @@
     const parts = [];
     if (info.subfolderCount) parts.push(`${info.subfolderCount} ${info.subfolderCount === 1 ? "subpasta" : "subpastas"}`);
     if (info.affectedDecks.length) parts.push(`${info.affectedDecks.length} ${info.affectedDecks.length === 1 ? "baralho" : "baralhos"}`);
-    if (info.cardCount) parts.push(`${info.cardCount} ${info.cardCount === 1 ? "flashcard" : "flashcards"}`);
+    if (info.cardCount !== null && info.cardCount > 0) parts.push(`${info.cardCount} ${info.cardCount === 1 ? "flashcard" : "flashcards"}`);
     const contents = parts.length ? ` Ela contém ${parts.join(", ")}.` : " Ela está vazia.";
     $("#directDeleteConfirmMessage").textContent = `A pasta “${info.folder.name}” será apagada.${contents}`;
     $("#directDeleteConfirmWarning").textContent = info.affectedDecks.length || info.subfolderCount
@@ -349,6 +357,11 @@
       ? [pending.id]
       : pending.info.affectedDecks.map((deck) => deck.id);
     const folderIds = pending.type === "folder" ? [...pending.info.folderIds] : [];
+
+    if (window.OituLibrary?.removeItemsInstantly) {
+      window.OituLibrary.removeItemsInstantly(deckIds, folderIds);
+      return;
+    }
 
     deckIds.forEach((id) => list.querySelector(`[data-deck-id="${CSS.escape(id)}"]`)?.remove());
     folderIds.forEach((id) => list.querySelector(`[data-folder-id="${CSS.escape(id)}"]`)?.remove());
@@ -383,12 +396,14 @@
     if (pending.type === "folder") closeModal("folderEditModal");
     removePendingRows(pending);
     if (pending.type === "deck" && wasDeckView) showHomeInstantly();
+    setActionLoading(true, pending.type === "deck" ? "Excluindo baralho" : "Excluindo pasta e conteúdo");
 
     try {
       if (pending.type === "deck") {
         if (typeof OituDB.deleteLibraryItems === "function") await OituDB.deleteLibraryItems([pending.id], []);
         else await OituDB.deleteDeck(pending.id);
         state.editingDeckId = null;
+        setActionLoading(false);
         showToast("Baralho excluído.");
         scheduleLibrarySync(0);
         return;
@@ -397,14 +412,17 @@
       if (pending.type === "folder") {
         await deleteFolderTree(pending.info);
         if (state.editingFolderId === pending.id) state.editingFolderId = null;
+        setActionLoading(false);
         showToast(pending.info.subfolderCount ? "Pasta e conteúdo excluídos." : "Pasta excluída.");
         scheduleLibrarySync(0);
       }
     } catch (error) {
+      setActionLoading(false);
       console.error("OituCards: falha ao excluir item.", error);
       alert("Não foi possível concluir a exclusão. Tente novamente.");
       scheduleLibrarySync(0);
     } finally {
+      setActionLoading(false);
       if (accept) accept.disabled = false;
     }
   }

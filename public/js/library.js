@@ -390,6 +390,28 @@ function scheduleRender(delay = 0) {
 clearTimeout(renderTimer);
 renderTimer = setTimeout(() => renderLibrary(), delay);
 }
+function removeItemsInstantly(deckIds = [], folderIds = []) {
+clearTimeout(renderTimer);
+renderTimer = null;
+const deckIdSet = new Set(deckIds || []);
+const folderIdSet = new Set(folderIds || []);
+if (state.snapshot) {
+state.snapshot.decks = state.snapshot.decks.filter(deck => !deckIdSet.has(deck.id));
+state.snapshot.folders = state.snapshot.folders.filter(folder => !folderIdSet.has(folder.id));
+deckIdSet.forEach(id => state.snapshot.deckSummaries.delete(id));
+folderIdSet.forEach(id => state.expandedFolders.delete(id));
+state.snapshot.folderSummaries = buildFolderSummaries(state.snapshot.folders, state.snapshot.decks, state.snapshot.deckSummaries);
+}
+deckIdSet.forEach(id => state.selected.delete(selectedKey("deck", id)));
+folderIdSet.forEach(id => state.selected.delete(selectedKey("folder", id)));
+if (state.snapshot && $("#homeView")?.classList.contains("active")) {
+renderSnapshot();
+return;
+}
+deckIdSet.forEach(id => document.querySelector(`[data-deck-id="${CSS.escape(id)}"]`)?.remove());
+folderIdSet.forEach(id => document.querySelector(`[data-folder-id="${CSS.escape(id)}"]`)?.remove());
+updateSelectionBar();
+}
 function toggleFolder(folderId) {
 if (state.expandedFolders.has(folderId)) state.expandedFolders.delete(folderId);
 else state.expandedFolders.add(folderId);
@@ -471,15 +493,29 @@ deckIdsForFolder(id, folders, decks).forEach(deckId => selectedDeckIds.add(deckI
 }
 const message = `Excluir ${selectedDeckIds.size} ${selectedDeckIds.size === 1 ? "baralho" : "baralhos"}${folderDeleteIds.size ? ` e ${folderDeleteIds.size} ${folderDeleteIds.size === 1 ? "pasta" : "pastas"}` : ""}? Todos os flashcards contidos serão apagados deste navegador.`;
 if (!window.confirm(message)) return;
-for (const deckId of selectedDeckIds) await OituDB.deleteDeck(deckId);
-const depth = id => folderPath(id, folders).length;
-for (const folderId of [...folderDeleteIds].sort((a, b) => depth(b) - depth(a))) {
-await OituDB.deleteFolder(folderId);
-state.expandedFolders.delete(folderId);
-}
+const deckIds = [...selectedDeckIds];
+const folderIds = [...folderDeleteIds];
+removeItemsInstantly(deckIds, folderIds);
 state.selected.clear();
+window.OituActionFeedback?.setLoading?.(true, "Excluindo itens selecionados");
+try {
+if (typeof OituDB.deleteLibraryItems === "function") await OituDB.deleteLibraryItems(deckIds, folderIds);
+else {
+for (const deckId of deckIds) await OituDB.deleteDeck(deckId);
+const depth = id => folderPath(id, folders).length;
+for (const folderId of folderIds.sort((a, b) => depth(b) - depth(a))) await OituDB.deleteFolder(folderId);
+}
+window.OituActionFeedback?.setLoading?.(false);
 showToast("Itens excluídos.");
 scheduleRender();
+} catch (error) {
+window.OituActionFeedback?.setLoading?.(false);
+console.error("OituCards: falha ao excluir itens selecionados.", error);
+alert("Não foi possível concluir a exclusão. Tente novamente.");
+await renderLibrary();
+} finally {
+window.OituActionFeedback?.setLoading?.(false);
+}
 }
 async function openMoveModal(entities = null) {
 const folders = await OituDB.getFolders();
@@ -677,7 +713,8 @@ window.OituLibrary = {
 render: renderLibrary,
 studyFolder,
 normalizeAnkiPaths,
-toggleFolder
+toggleFolder,
+removeItemsInstantly
 };
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
 else init();
