@@ -33,6 +33,10 @@
       updatedAt: new Date().toISOString()
     };
     writeState(state);
+
+    // Abre o diretório ZIP no Worker assim que a escrita única termina.
+    // Isso acontece em paralelo à persistência dos cards e não bloqueia a interface.
+    api.ensurePackageLoaded(record.id).catch(() => {});
     return result;
   };
 
