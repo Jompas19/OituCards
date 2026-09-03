@@ -6,3 +6,7 @@
 
 /css/*
   Cache-Control: no-cache, max-age=0, must-revalidate
+
+/api/sync/*
+  Cache-Control: no-store
+  X-Content-Type-Options: nosniff

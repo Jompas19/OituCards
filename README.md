@@ -2,11 +2,27 @@
 
 O **OituCards** é uma aplicação web de flashcards voltada para criação, organização e revisão ativa de conteúdos de estudo.
 
-A versão atual funciona como uma aplicação **local-first**: baralhos, pastas, flashcards, progresso de revisão e anotações ficam salvos no **IndexedDB do próprio navegador**. Não há conta, servidor de dados ou sincronização entre dispositivos nesta versão.
+A versão atual funciona como uma aplicação **local-first**: baralhos, pastas, flashcards, progresso de revisão, anotações e imagens ficam salvos no **IndexedDB do próprio navegador**. Opcionalmente, o usuário pode conectar um nome de usuário — com senha simples ou sem senha — para sincronizar a biblioteca entre dispositivos.
 
 > **Checkpoint estável atual:** OituCards v2  
 > Commit: `0c5f2b2862ba1c041a921d554a25d1888cfa2fb1`  
 > Branch de backup: `oitucards-v2`
+
+---
+
+## Sincronização entre dispositivos
+
+- A sincronização é opcional e não exige e-mail.
+- O acesso usa apenas nome de usuário e uma senha opcional.
+- Sem senha, qualquer pessoa que conheça exatamente o nome de usuário pode acessar o perfil; o próprio painel mostra esse aviso.
+- O IndexedDB local continua sendo a fonte imediata da interface. Abrir a biblioteca, uma pasta ou iniciar o estudo não espera a rede.
+- Cards, estrutura da biblioteca e progresso entram em uma fila incremental e são enviados em segundo plano.
+- Alterações de outro dispositivo são consultadas a cada poucos segundos, além de eventos de foco e reconexão.
+- Imagens são enviadas em blocos e baixadas progressivamente. Uma imagem visível tem prioridade; o restante é preenchido em segundo plano.
+- Se a conexão cair, o estudo continua normalmente e a fila é retomada quando a internet volta.
+- O serviço remoto usa um Durable Object SQLite por nome de usuário, configurado em `wrangler.jsonc`.
+
+O primeiro envio de uma biblioteca muito grande ainda depende da velocidade de upload do dispositivo, principalmente por causa das imagens. Depois dessa carga inicial, somente alterações incrementais são trocadas.
 
 ---
 

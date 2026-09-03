@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="css/study.css?v=20260823-1057" data-oitucards-study-css="true" />
   <link rel="stylesheet" href="css/import.css?v=20260902-1015" data-oitucards-import-css="true" />
   <link rel="stylesheet" href="css/library.css?v=20260823-1124" data-oitucards-library-css="true" />
+  <link rel="stylesheet" href="css/sync.css?v=20260903-1200" data-oitucards-sync-css="true" />
 </head>
 <body>
   <div id="app">
@@ -31,7 +32,13 @@
         </button>
         <span class="version-badge">v1</span>
       </div>
-      <button id="themeToggle" class="icon-button" type="button" aria-label="Abrir configurações" title="Configurações" aria-expanded="false">⚙</button>
+      <div class="topbar-actions">
+        <button id="syncButton" class="icon-button sync-trigger" type="button" aria-label="Sincronizar entre dispositivos" title="Sincronizar entre dispositivos" aria-expanded="false" aria-controls="syncModal" data-state="disconnected">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.1 18.2h10.4a4.5 4.5 0 0 0 .6-9 6.4 6.4 0 0 0-12-1.6 5.3 5.3 0 0 0 1 10.6Z"/></svg>
+          <span class="sync-trigger-dot" aria-hidden="true"></span>
+        </button>
+        <button id="themeToggle" class="icon-button" type="button" aria-label="Abrir configurações" title="Configurações" aria-expanded="false">⚙</button>
+      </div>
     </header>
 
     <main class="shell">
@@ -97,6 +104,58 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- MODAL: SINCRONIZAÇÃO -->
+  <div id="syncModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="syncModalTitle">
+    <div class="modal small-modal sync-modal">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Entre dispositivos</p>
+          <h2 id="syncModalTitle">Sincronização</h2>
+        </div>
+        <button id="syncClose" class="icon-button modal-close" type="button" aria-label="Fechar">×</button>
+      </div>
+
+      <section id="syncDisconnected">
+        <p class="sync-intro">Continue no celular ou em outro computador com os mesmos cards e o mesmo progresso. O uso sem sincronização continua funcionando normalmente.</p>
+        <form id="syncForm">
+          <label class="field-label" for="syncUsername">Nome de usuário</label>
+          <input id="syncUsername" class="text-input" type="text" minlength="3" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Ex.: joao.estudos" required />
+
+          <label class="field-label sync-password-label" for="syncPassword">Senha <span>opcional</span></label>
+          <input id="syncPassword" class="text-input" type="password" maxlength="72" autocomplete="current-password" placeholder="Deixe em branco se não quiser senha" />
+          <p id="syncPasswordNotice" class="sync-security-notice">Sem senha, qualquer pessoa que souber exatamente esse nome de usuário poderá acessar os dados sincronizados.</p>
+          <p class="sync-merge-notice">Na primeira conexão, os cards deste aparelho serão unidos aos que já estiverem no perfil.</p>
+          <p id="syncFormFeedback" class="sync-feedback" role="status" aria-live="polite"></p>
+
+          <div class="modal-actions">
+            <button class="button ghost" type="button" id="syncCancel">Agora não</button>
+            <button id="syncConnectButton" class="button primary" type="submit">Conectar e sincronizar</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="syncConnected" class="hidden">
+        <div class="sync-profile-card">
+          <div class="sync-profile-icon" aria-hidden="true">☁</div>
+          <div>
+            <strong id="syncCurrentUser"></strong>
+            <span id="syncProtection"></span>
+          </div>
+          <span class="sync-live-dot" aria-hidden="true"></span>
+        </div>
+        <div class="sync-status-row" role="status" aria-live="polite">
+          <span class="sync-inline-spinner" aria-hidden="true"></span>
+          <p id="syncStatusText"></p>
+        </div>
+        <p class="sync-local-note">Se a internet cair, você pode continuar estudando. As alterações ficam neste aparelho e são enviadas quando a conexão voltar.</p>
+        <div class="modal-actions sync-actions">
+          <button id="syncDisconnectButton" class="button ghost" type="button">Desconectar este aparelho</button>
+          <button id="syncNowButton" class="button primary" type="button">Sincronizar agora</button>
+        </div>
+      </section>
+    </div>
   </div>
 
   <!-- MODAL: NOVO BARALHO -->
@@ -283,7 +342,7 @@
     <span class="action-loading-spinner" aria-hidden="true"></span>
   </div>
 
-  <script src="js/db.js?v=20260902-1900"></script>
+  <script src="js/db.js?v=20260903-1200"></script>
   <script src="js/editor.js?v=20260902-1900"></script>
   <script src="js/app.js?v=20260902-1400"></script>
   <script src="js/study-next.js?v=20260902-1900" data-oitucards-study="true" data-oitucards-study-next="true"></script>
@@ -293,5 +352,6 @@
   <script src="js/import.js?v=20260902-1900" data-oitucards-import="true"></script>
   <script src="js/library.js?v=20260902-1900" data-oitucards-library="true"></script>
   <script src="js/library-enhancements.js?v=20260823-1124" data-oitucards-library-enhancements="true"></script>
+  <script src="js/sync.js?v=20260903-1200" data-oitucards-sync="true"></script>
 </body>
 </html>

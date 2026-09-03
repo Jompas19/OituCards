@@ -1,8 +1,18 @@
 {
   // Trigger de deploy renovado em 2026-08-23.
   "name": "oitucards",
+  "main": "worker/index.mjs",
   "compatibility_date": "2026-08-23",
   "assets": {
-    "directory": "./public"
-  }
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SYNC_USERS", "class_name": "OituSyncUser" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-sync-users", "new_sqlite_classes": ["OituSyncUser"] }
+  ]
 }
