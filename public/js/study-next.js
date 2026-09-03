@@ -574,11 +574,17 @@
   }
 
   function preloadNextDeck() {
-    const next = state.queue[state.currentIndex + 1]?.card;
-    if (!next || typeof next.frontHtml === "string" || state.deckLoads.has(next.deckId)) return;
-    const preload = () => ensureStudyCardLoaded(next).catch(() => {});
-    if (typeof requestIdleCallback === "function") requestIdleCallback(preload, { timeout: 900 });
-    else setTimeout(preload, 80);
+    const current = currentEntry()?.card;
+    if (current) window.OituMedia?.prefetch?.(current.backHtml || "");
+    const upcoming = state.queue.slice(state.currentIndex + 1, state.currentIndex + 3).map((entry) => entry?.card).filter(Boolean);
+    if (!upcoming.length) return;
+    const preload = async () => {
+      await Promise.allSettled(upcoming.map(async (card) => {
+        await ensureStudyCardLoaded(card);
+        await window.OituMedia?.prefetch?.(card.frontHtml || "", card.backHtml || "");
+      }));
+    };
+    setTimeout(preload, 0);
   }
 
   async function renderCurrent() {

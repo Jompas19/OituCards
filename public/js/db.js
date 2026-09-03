@@ -13,6 +13,7 @@
   const cardCacheByDeck = new Map();
   const cardCacheExpiry = new Map();
   const cardCacheTimers = new Map();
+  let missingMediaScanAfter = null;
   const CARD_CACHE_TTL_MS = 90000;
   let syncSink = null;
 
@@ -929,12 +930,18 @@
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("media", "readonly");
-      const request = tx.objectStore("media").openCursor();
+      const range = missingMediaScanAfter === null ? undefined : IDBKeyRange.lowerBound(missingMediaScanAfter, true);
+      const request = tx.objectStore("media").openCursor(range);
       const ids = [];
       request.onsuccess = (event) => {
         const cursor = event.target.result;
-        if (!cursor || ids.length >= maximum) return;
+        if (!cursor) {
+          missingMediaScanAfter = null;
+          return;
+        }
+        missingMediaScanAfter = cursor.key;
         if (!cursor.value?.blob) ids.push(cursor.key);
+        if (ids.length >= maximum) return;
         cursor.continue();
       };
       tx.oncomplete = () => resolve(ids);
@@ -1171,6 +1178,38 @@
     });
   }
 
+  async function clearLocalLibrary() {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(["decks", "cards", "cardMeta", "media"], "readwrite");
+      ["decks", "cards", "cardMeta", "media"].forEach((name) => tx.objectStore(name).clear());
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível limpar os dados deste dispositivo."));
+    });
+    cardCacheTimers.forEach((timer) => clearTimeout(timer));
+    cardCacheByDeck.clear();
+    cardCacheExpiry.clear();
+    cardCacheTimers.clear();
+    missingMediaScanAfter = null;
+  }
+
+  function displayMediaRecord(image, record) {
+    if (!image?.isConnected || !record?.blob) return false;
+    const url = URL.createObjectURL(record.blob);
+    const release = () => URL.revokeObjectURL(url);
+    image.addEventListener("load", release, { once: true });
+    image.addEventListener("error", release, { once: true });
+    image.loading = "eager";
+    image.decoding = "async";
+    image.fetchPriority = "high";
+    image.src = url;
+    image.dataset.oituMediaLoaded = "true";
+    delete image.dataset.oituMediaMissing;
+    delete image.dataset.oituMediaPending;
+    return true;
+  }
+
   async function hydrateMedia(root) {
     if (!(root instanceof Element || root instanceof Document || root instanceof DocumentFragment)) return;
     const images = [
@@ -1188,30 +1227,60 @@
       throw error;
     }
 
-    const missingIds = [...new Set(images
-      .map((image) => image.dataset.oituMediaId)
-      .filter((id) => !records.get(id)?.blob))];
-    if (missingIds.length && window.OituSync?.ensureMedia) {
-      const fetched = await Promise.all(missingIds.map((id) => window.OituSync.ensureMedia(id).catch(() => null)));
-      fetched.forEach((record) => { if (record?.blob) records.set(record.id, record); });
+    images.forEach((image) => {
+      const record = records.get(image.dataset.oituMediaId);
+      if (record?.blob) displayMediaRecord(image, record);
+    });
+
+    const imagesById = new Map();
+    images.filter((image) => !image.dataset.oituMediaLoaded).forEach((image) => {
+      const id = image.dataset.oituMediaId;
+      if (!imagesById.has(id)) imagesById.set(id, []);
+      imagesById.get(id).push(image);
+    });
+    if (!imagesById.size) return;
+    if (!window.OituSync?.ensureMedia) {
+      imagesById.forEach((targets) => targets.forEach((image) => {
+        delete image.dataset.oituMediaPending;
+        image.dataset.oituMediaMissing = "true";
+      }));
+      return;
     }
 
-    images.forEach((image) => {
-      delete image.dataset.oituMediaPending;
-      if (!image.isConnected) return;
-      const record = records.get(image.dataset.oituMediaId);
-      if (!record?.blob) {
-        image.dataset.oituMediaMissing = "true";
-        return;
+    await Promise.allSettled([...imagesById].map(async ([id, targets]) => {
+      try {
+        const record = await window.OituSync.ensureMedia(id);
+        if (!record?.blob) throw new Error("Imagem ainda não disponível.");
+        targets.forEach((image) => {
+          if (image.dataset.oituMediaId === id) displayMediaRecord(image, record);
+        });
+      } catch (_) {
+        targets.forEach((image) => {
+          delete image.dataset.oituMediaPending;
+          if (image.isConnected) image.dataset.oituMediaMissing = "true";
+        });
       }
-      const url = URL.createObjectURL(record.blob);
-      const release = () => URL.revokeObjectURL(url);
-      image.addEventListener("load", release, { once: true });
-      image.addEventListener("error", release, { once: true });
-      image.src = url;
-      image.loading = "lazy";
-      image.dataset.oituMediaLoaded = "true";
+    }));
+  }
+
+  function mediaIdsFromHtml(htmlValues) {
+    const ids = new Set();
+    const pattern = /data-oitu-media-id\s*=\s*["']([^"']+)["']/gi;
+    htmlValues.forEach((html) => {
+      if (typeof html !== "string" || !html.includes("data-oitu-media-id")) return;
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(html))) ids.add(match[1]);
     });
+    return [...ids];
+  }
+
+  async function prefetchMediaHtml(...htmlValues) {
+    const ids = mediaIdsFromHtml(htmlValues);
+    if (!ids.length || !window.OituSync?.ensureMedia) return;
+    const local = await getMediaBatch(ids);
+    const missing = ids.filter((id) => !local.get(id)?.blob);
+    await Promise.allSettled(missing.map((id) => window.OituSync.ensureMedia(id)));
   }
 
   function setMediaHtml(element, html, options = {}) {
@@ -1229,7 +1298,7 @@
     addFolder, updateFolder, getFolder, getFolders, deleteFolder,
     addCard, addCardsBatch, updateCard, getCard, getCardsByDeck, getCardSummariesByDeck, getCardSummariesForDecks, resetDeckProgressBatch, deleteCard, seedCardsByDeck,
     putMediaBatch, getMediaBatch, getMediaRecord, getMissingMediaIds,
-    getSyncSnapshot, applySyncChanges, setSyncSink
+    getSyncSnapshot, applySyncChanges, setSyncSink, clearLocalLibrary
   };
-  window.OituMedia = { hydrate: hydrateMedia, setHtml: setMediaHtml, getRecords: getMediaBatch };
+  window.OituMedia = { hydrate: hydrateMedia, setHtml: setMediaHtml, prefetch: prefetchMediaHtml, getRecords: getMediaBatch };
 })();

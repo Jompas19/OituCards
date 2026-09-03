@@ -2,7 +2,7 @@
   "use strict";
 
   const SYNC_DB_NAME = "OituCardsSyncDB";
-  const SYNC_DB_VERSION = 1;
+  const SYNC_DB_VERSION = 2;
   const POLL_INTERVAL_MS = 5000;
   const MUTATION_BATCH_LIMIT = 250;
   const MUTATION_BATCH_BYTES = 3_800_000;
@@ -10,7 +10,15 @@
   const MEDIA_PACKET_PARTS = 12;
   const MEDIA_CHUNK_BYTES = 1024 * 1024;
   const MEDIA_GROUP_BYTES = 14 * 1024 * 1024;
+  const PASSWORD_ITERATIONS = 120000;
   const USERNAME_PATTERN = /^[\p{L}\p{N}._-]{3,32}$/u;
+  const PRIVATE_STORAGE_KEYS = [
+    "OituCardsReviewPresetsV1",
+    "OituCardsGlobalReviewModelV1",
+    "OituCardsReviewPresetUnitsV2",
+    "OituCardsReviewPresetUnitsV1",
+    "OituCardsReviewTimeAuthorityV1"
+  ];
 
   let dbPromise = null;
   let session = null;
@@ -38,7 +46,10 @@
         const db = request.result;
         if (!db.objectStoreNames.contains("state")) db.createObjectStore("state", { keyPath: "key" });
         if (!db.objectStoreNames.contains("queue")) db.createObjectStore("queue", { keyPath: "key" });
-        if (!db.objectStoreNames.contains("mediaQueue")) db.createObjectStore("mediaQueue", { keyPath: "id" });
+        const mediaQueue = db.objectStoreNames.contains("mediaQueue")
+          ? request.transaction.objectStore("mediaQueue")
+          : db.createObjectStore("mediaQueue", { keyPath: "id" });
+        if (!mediaQueue.indexNames.contains("size")) mediaQueue.createIndex("size", "size", { unique: false });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -77,6 +88,19 @@
     });
   }
 
+  async function clearProfileState() {
+    const db = await openSyncDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(["state", "queue", "mediaQueue"], "readwrite");
+      tx.objectStore("state").delete("session");
+      tx.objectStore("queue").clear();
+      tx.objectStore("mediaQueue").clear();
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível limpar o estado da sincronização."));
+    });
+  }
+
   async function saveSession() {
     if (!session) return;
     await writeRecord("state", { key: "session", ...session });
@@ -93,6 +117,30 @@
   function normalizedUsername(value) {
     const username = String(value || "").normalize("NFKC").trim().toLocaleLowerCase("pt-BR");
     return USERNAME_PATTERN.test(username) ? username : null;
+  }
+
+  function encodeBase64Url(bytes) {
+    let binary = "";
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    for (let index = 0; index < view.length; index += 1) binary += String.fromCharCode(view[index]);
+    return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  }
+
+  async function derivePasswordKey(password, salt) {
+    if (!password) return "";
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+    const bits = await crypto.subtle.deriveBits({
+      name: "PBKDF2",
+      hash: "SHA-256",
+      salt: encoder.encode(salt),
+      iterations: PASSWORD_ITERATIONS
+    }, key, 256);
+    return encodeBase64Url(bits);
+  }
+
+  function derivePasswordProof(username, password) {
+    return derivePasswordKey(password, `OituCardsSyncPasswordV1:${username}`);
   }
 
   function modifiedAt(value) {
@@ -219,7 +267,7 @@
     const db = await openSyncDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction("mediaQueue", "readonly");
-      const request = tx.objectStore("mediaQueue").openCursor();
+      const request = tx.objectStore("mediaQueue").index("size").openCursor();
       const records = [];
       let bytes = 0;
       request.onsuccess = (event) => {
@@ -268,6 +316,16 @@
       throw new Error("A sessão expirou. Conecte o perfil novamente.");
     }
     return response;
+  }
+
+  async function revokeSession(previous) {
+    if (!previous?.token || navigator.onLine === false) return;
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${previous.token}`);
+    headers.set("X-Oitu-User", encodeURIComponent(previous.username));
+    headers.set("X-Oitu-Device", previous.deviceId);
+    try { await fetch("/api/sync/session", { method: "DELETE", headers, cache: "no-store" }); }
+    catch (_) {}
   }
 
   async function apiJSON(path, options = {}) {
@@ -337,6 +395,7 @@
       rounds += 1;
       const result = await apiJSON(`/api/sync/pull?since=${cursor}&limit=500`);
       if (!session || session.username !== username) return applied;
+      if (typeof result.isSourceDevice === "boolean") session.isSourceDevice = result.isSourceDevice;
       const changes = Array.isArray(result.changes) ? result.changes : [];
       if (changes.length) {
         await removeRemoteWinsFromMediaQueue(changes);
@@ -535,10 +594,10 @@
     const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     if (connection?.saveData || /(^|-)2g$/.test(connection?.effectiveType || "")) return;
     try {
-      const ids = (await OituDB.getMissingMediaIds(12)).filter((id) => (mediaRetryAt.get(id) || 0) <= Date.now()).slice(0, 4);
+      const ids = (await OituDB.getMissingMediaIds(24)).filter((id) => (mediaRetryAt.get(id) || 0) <= Date.now()).slice(0, 8);
       if (!ids.length) return;
       await Promise.allSettled(ids.map((id) => ensureMedia(id)));
-      scheduleBackgroundMedia(200);
+      scheduleBackgroundMedia(60);
     } catch (error) {
       console.warn("OituCards: download de imagens aguardando nova tentativa.", error);
       scheduleBackgroundMedia(5000);
@@ -590,6 +649,13 @@
     if (!connected && !$("#syncPassword")?.value) $("#syncPasswordNotice")?.classList.remove("hidden");
     if ($("#syncCurrentUser")) $("#syncCurrentUser").textContent = connected ? session.username : "";
     if ($("#syncProtection")) $("#syncProtection").textContent = session?.protected ? "Protegido por senha" : "Sem senha";
+    if ($("#syncDeviceRole")) {
+      $("#syncDeviceRole").textContent = session?.isSourceDevice === true
+        ? "Dispositivo de origem · os dados locais serão preservados ao desconectar."
+        : session?.isSourceDevice === false
+          ? "Dispositivo secundário · os dados locais serão removidos ao desconectar."
+          : "Identificando a função deste dispositivo...";
+    }
     if ($("#syncStatusText")) $("#syncStatusText").textContent = statusText(override);
     if ($("#syncNowButton")) $("#syncNowButton").disabled = !connected || active || navigator.onLine === false;
     if ($("#syncConnectButton")) $("#syncConnectButton").disabled = active || profileChanging;
@@ -614,11 +680,33 @@
     renderStatus("Conectando ao perfil...");
     try {
       const deviceId = await getDeviceId();
+      if (password) {
+        feedback.textContent = "Protegendo a senha neste dispositivo...";
+        renderStatus("Preparando a senha com segurança...");
+      }
+      let passwordProof = "";
+      let legacyPasswordProof = "";
+      if (password) {
+        const passwordInfoPromise = apiJSON("/api/sync/password-info", {
+          auth: false,
+          headers: { "X-Oitu-User": encodeURIComponent(username) }
+        }).catch(() => null);
+        const passwordProofPromise = derivePasswordProof(username, password);
+        const passwordInfo = await passwordInfoPromise;
+        if (passwordInfo?.scheme === "legacy-pbkdf2" && passwordInfo.salt) {
+          [passwordProof, legacyPasswordProof] = await Promise.all([
+            passwordProofPromise,
+            derivePasswordKey(password, String(passwordInfo.salt))
+          ]);
+        } else {
+          passwordProof = await passwordProofPromise;
+        }
+      }
       const result = await apiJSON("/api/sync/session", {
         auth: false,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, deviceId })
+        body: JSON.stringify({ username, password, passwordProof, legacyPasswordProof, deviceId })
       });
       await clearStores(["queue", "mediaQueue"]);
       session = {
@@ -626,6 +714,7 @@
         token: result.token,
         deviceId,
         protected: Boolean(result.protected),
+        isSourceDevice: typeof result.isSourceDevice === "boolean" ? result.isSourceDevice : null,
         expiresAt: Number(result.expiresAt) || 0,
         lastVersion: 0,
         lastSyncedAt: 0
@@ -654,30 +743,71 @@
     }
   }
 
+  function closeDisconnectModal() {
+    $("#syncDisconnectModal")?.classList.add("hidden");
+    if (session) $("#syncModal")?.classList.remove("hidden");
+    if (!document.querySelector(".modal-backdrop:not(.hidden)")) document.body.style.overflow = "";
+  }
+
+  function openDisconnectModal() {
+    if (!session || profileChanging) return;
+    const secondary = session.isSourceDevice === false;
+    const source = session.isSourceDevice === true;
+    if ($("#syncDisconnectTitle")) {
+      $("#syncDisconnectTitle").textContent = secondary
+        ? "Desconectar e limpar este dispositivo?"
+        : "Desconectar este dispositivo?";
+    }
+    if ($("#syncDisconnectMessage")) {
+      $("#syncDisconnectMessage").textContent = secondary
+        ? "Este não é o dispositivo de origem. Todos os cards, imagens e ajustes pessoais salvos neste navegador serão removidos. Os dados sincronizados permanecerão intactos para você acessar novamente."
+        : source
+          ? "A sincronização será encerrada, mas sua biblioteca e suas imagens permanecerão salvas neste dispositivo de origem."
+          : "Ainda não foi possível confirmar a função deste dispositivo. Por segurança, a sincronização será encerrada sem remover a biblioteca local.";
+    }
+    if ($("#syncDisconnectAccept")) {
+      $("#syncDisconnectAccept").textContent = secondary ? "Desconectar e limpar" : "Desconectar";
+    }
+    if ($("#syncDisconnectFeedback")) $("#syncDisconnectFeedback").textContent = "";
+    $("#syncModal")?.classList.add("hidden");
+    $("#syncDisconnectModal")?.classList.remove("hidden");
+    document.body.style.overflow = "hidden";
+    setTimeout(() => $("#syncDisconnectCancel")?.focus(), 0);
+  }
+
   async function disconnect() {
     if (profileChanging) return;
     profileChanging = true;
+    if ($("#syncDisconnectAccept")) $("#syncDisconnectAccept").disabled = true;
     const previous = session;
+    const secondary = previous?.isSourceDevice === false;
     session = null;
     clearTimeout(flushTimer);
     clearTimeout(backgroundMediaTimer);
     renderStatus();
-    if (previous?.token && navigator.onLine !== false) {
-      session = previous;
-      try { await authenticatedFetch("/api/sync/session", { method: "DELETE" }); } catch (_) {}
-      session = null;
-    }
     try {
-      await clearStores(["queue", "mediaQueue"]);
-      const db = await openSyncDB();
-      await new Promise((resolve) => {
-        const tx = db.transaction("state", "readwrite");
-        tx.objectStore("state").delete("session");
-        tx.oncomplete = resolve;
-        tx.onerror = resolve;
-      });
+      if (secondary) {
+        window.OituActionFeedback?.setLoading?.(true, "Limpando dados deste dispositivo");
+        await OituDB.clearLocalLibrary();
+        PRIVATE_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+      }
+      await clearProfileState();
+      await revokeSession(previous);
       lastError = "";
+      closeDisconnectModal();
+      closeModal();
+      if (secondary) {
+        location.reload();
+        return;
+      }
+    } catch (error) {
+      session = previous;
+      if ($("#syncDisconnectFeedback")) {
+        $("#syncDisconnectFeedback").textContent = error?.message || "Não foi possível concluir a desconexão.";
+      }
     } finally {
+      window.OituActionFeedback?.setLoading?.(false);
+      if ($("#syncDisconnectAccept")) $("#syncDisconnectAccept").disabled = false;
       profileChanging = false;
       renderStatus();
     }
@@ -692,12 +822,20 @@
     });
     $("#syncForm")?.addEventListener("submit", connect);
     $("#syncNowButton")?.addEventListener("click", () => syncNow({ message: "Buscando alterações agora..." }));
-    $("#syncDisconnectButton")?.addEventListener("click", disconnect);
+    $("#syncDisconnectButton")?.addEventListener("click", openDisconnectModal);
+    $("#syncDisconnectClose")?.addEventListener("click", closeDisconnectModal);
+    $("#syncDisconnectCancel")?.addEventListener("click", closeDisconnectModal);
+    $("#syncDisconnectAccept")?.addEventListener("click", disconnect);
+    $("#syncDisconnectModal")?.addEventListener("click", (event) => {
+      if (event.target === $("#syncDisconnectModal")) closeDisconnectModal();
+    });
     $("#syncPassword")?.addEventListener("input", (event) => {
       $("#syncPasswordNotice")?.classList.toggle("hidden", Boolean(event.target.value));
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !$("#syncModal")?.classList.contains("hidden")) closeModal();
+      if (event.key !== "Escape") return;
+      if (!$("#syncDisconnectModal")?.classList.contains("hidden")) closeDisconnectModal();
+      else if (!$("#syncModal")?.classList.contains("hidden")) closeModal();
     });
   }
 

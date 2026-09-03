@@ -13,12 +13,13 @@ A versão atual funciona como uma aplicação **local-first**: baralhos, pastas,
 ## Sincronização entre dispositivos
 
 - A sincronização é opcional e não exige e-mail.
-- O acesso usa apenas nome de usuário e uma senha opcional.
+- O acesso usa apenas nome de usuário e uma senha opcional, derivada no próprio dispositivo para manter a autenticação rápida.
 - Sem senha, qualquer pessoa que conheça exatamente o nome de usuário pode acessar o perfil; o próprio painel mostra esse aviso.
 - O IndexedDB local continua sendo a fonte imediata da interface. Abrir a biblioteca, uma pasta ou iniciar o estudo não espera a rede.
 - Cards, estrutura da biblioteca e progresso entram em uma fila incremental e são enviados em segundo plano.
 - Alterações de outro dispositivo são consultadas a cada poucos segundos, além de eventos de foco e reconexão.
-- Imagens são enviadas em blocos e baixadas progressivamente. Uma imagem visível tem prioridade; o restante é preenchido em segundo plano.
+- Imagens são enviadas em blocos, exibidas individualmente assim que ficam prontas e antecipadas para o verso e para os próximos cards.
+- Ao desconectar, o dispositivo de origem preserva a biblioteca local; dispositivos secundários removem cards, imagens e ajustes pessoais somente daquele navegador.
 - Se a conexão cair, o estudo continua normalmente e a fila é retomada quando a internet volta.
 - O serviço remoto usa um Durable Object SQLite por nome de usuário, configurado em `wrangler.jsonc`.
 

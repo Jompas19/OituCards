@@ -59,6 +59,32 @@
   line-height: 1.55;
 }
 
+.sync-device-role {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface));
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.45;
+}
+
+.sync-disconnect-modal .confirm-message {
+  margin-bottom: 12px;
+  line-height: 1.55;
+}
+
+.sync-cloud-preserved {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: .8rem;
+  line-height: 1.45;
+}
+
 .sync-password-label {
   margin-top: 18px;
 }

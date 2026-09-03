@@ -4,6 +4,7 @@ const MAX_MEDIA_PUSH_BYTES = 9 * 1024 * 1024;
 const MAX_ITEM_BYTES = 1_700_000;
 const MAX_MEDIA_BYTES = 64 * 1024 * 1024;
 const PASSWORD_ITERATIONS = 120000;
+const PASSWORD_PROOF_SCHEME = "client-pbkdf2-v1";
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -97,12 +98,17 @@ export class OituSyncUser {
       username TEXT NOT NULL,
       password_hash TEXT,
       password_salt TEXT,
+      source_device_id TEXT,
       seq INTEGER NOT NULL DEFAULT 0,
       failed_attempts INTEGER NOT NULL DEFAULT 0,
       locked_until INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`);
+    const profileColumns = [...this.sql.exec("PRAGMA table_info(profile)")];
+    if (!profileColumns.some((column) => column.name === "source_device_id")) {
+      this.sql.exec("ALTER TABLE profile ADD COLUMN source_device_id TEXT");
+    }
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       device_id TEXT NOT NULL,
@@ -143,6 +149,13 @@ export class OituSyncUser {
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_version ON items(version)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_parent ON items(kind, parent_id)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_media_version ON media(version)");
+    const profile = this.profile();
+    if (profile && !profile.source_device_id) {
+      const origin = first(this.sql.exec("SELECT device_id FROM items ORDER BY version LIMIT 1"));
+      if (origin?.device_id) {
+        this.sql.exec("UPDATE profile SET source_device_id = ? WHERE singleton = 1", origin.device_id);
+      }
+    }
   }
 
   atomic(callback) {
@@ -154,6 +167,16 @@ export class OituSyncUser {
 
   profile() {
     return first(this.sql.exec("SELECT * FROM profile WHERE singleton = 1"));
+  }
+
+  passwordInfo() {
+    const profile = this.profile();
+    const legacy = Boolean(profile?.password_hash && profile.password_salt !== PASSWORD_PROOF_SCHEME);
+    return json({
+      protected: Boolean(profile?.password_hash),
+      scheme: legacy ? "legacy-pbkdf2" : PASSWORD_PROOF_SCHEME,
+      salt: legacy ? profile.password_salt : null
+    });
   }
 
   async createSession(request) {
@@ -169,8 +192,12 @@ export class OituSyncUser {
 
     const username = normalizeUsername(body?.username);
     const password = typeof body?.password === "string" ? body.password : "";
+    const passwordProof = typeof body?.passwordProof === "string" ? body.passwordProof : "";
+    const legacyPasswordProof = typeof body?.legacyPasswordProof === "string" ? body.legacyPasswordProof : "";
     const deviceId = String(body?.deviceId || "");
-    if (!username || !validIdentifier(deviceId) || password.length > 72) {
+    const validProofs = (!passwordProof || /^[A-Za-z0-9_-]{43}$/.test(passwordProof)) &&
+      (!legacyPasswordProof || /^[A-Za-z0-9_-]{43}$/.test(legacyPasswordProof));
+    if (!username || !validIdentifier(deviceId) || password.length > 72 || !validProofs) {
       return json({ error: "Confira o usuário e a senha informados." }, 400);
     }
 
@@ -178,13 +205,16 @@ export class OituSyncUser {
     let profile = this.profile();
     let created = false;
     if (!profile) {
-      const salt = password ? randomToken(18) : null;
-      const digest = password ? await passwordDigest(password, salt) : null;
+      const protectedProfile = Boolean(password || passwordProof);
+      const salt = protectedProfile ? (passwordProof ? PASSWORD_PROOF_SCHEME : randomToken(18)) : null;
+      const digest = protectedProfile
+        ? (passwordProof ? await sha256(`${PASSWORD_PROOF_SCHEME}:${passwordProof}`) : await passwordDigest(password, salt))
+        : null;
       profile = this.profile();
       if (!profile) {
         this.sql.exec(
-          "INSERT INTO profile(singleton, username, password_hash, password_salt, seq, created_at, updated_at) VALUES(1, ?, ?, ?, 0, ?, ?)",
-          username, digest, salt, now, now
+          "INSERT INTO profile(singleton, username, password_hash, password_salt, source_device_id, seq, created_at, updated_at) VALUES(1, ?, ?, ?, ?, 0, ?, ?)",
+          username, digest, salt, deviceId, now, now
         );
         profile = this.profile();
         created = true;
@@ -196,7 +226,9 @@ export class OituSyncUser {
         return json({ error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." }, 429);
       }
       if (profile.password_hash) {
-        const digest = await passwordDigest(password, profile.password_salt);
+        const digest = profile.password_salt === PASSWORD_PROOF_SCHEME
+          ? (passwordProof ? await sha256(`${PASSWORD_PROOF_SCHEME}:${passwordProof}`) : "")
+          : (legacyPasswordProof || await passwordDigest(password, profile.password_salt));
         if (!safeEqual(digest, profile.password_hash)) {
           const attempts = (Number(profile.failed_attempts) || 0) + 1;
           const lockMs = attempts >= 5 ? Math.min(15 * 60 * 1000, 30000 * 2 ** Math.min(5, attempts - 5)) : 0;
@@ -206,8 +238,20 @@ export class OituSyncUser {
           );
           return json({ error: "Usuário ou senha incorretos." }, attempts >= 5 ? 429 : 403);
         }
+        if (profile.password_salt !== PASSWORD_PROOF_SCHEME && passwordProof) {
+          const migratedDigest = await sha256(`${PASSWORD_PROOF_SCHEME}:${passwordProof}`);
+          this.sql.exec(
+            "UPDATE profile SET password_hash = ?, password_salt = ?, updated_at = ? WHERE singleton = 1",
+            migratedDigest, PASSWORD_PROOF_SCHEME, now
+          );
+          profile = this.profile();
+        }
       }
       this.sql.exec("UPDATE profile SET failed_attempts = 0, locked_until = 0, updated_at = ? WHERE singleton = 1", now);
+      if (!profile.source_device_id) {
+        this.sql.exec("UPDATE profile SET source_device_id = ?, updated_at = ? WHERE singleton = 1", deviceId, now);
+        profile = this.profile();
+      }
     }
 
     this.sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now);
@@ -223,6 +267,7 @@ export class OituSyncUser {
       username,
       created,
       protected: Boolean(profile?.password_hash),
+      isSourceDevice: profile?.source_device_id === deviceId,
       currentVersion: Number(profile?.seq) || 0,
       expiresAt
     });
@@ -241,7 +286,12 @@ export class OituSyncUser {
       if (session) this.sql.exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash);
       return null;
     }
-    return { ...session, tokenHash };
+    let profile = this.profile();
+    if (profile && !profile.source_device_id) {
+      this.sql.exec("UPDATE profile SET source_device_id = ?, updated_at = ? WHERE singleton = 1", session.device_id, Date.now());
+      profile = this.profile();
+    }
+    return { ...session, tokenHash, isSourceDevice: profile?.source_device_id === session.device_id };
   }
 
   currentSequence() {
@@ -431,7 +481,7 @@ export class OituSyncUser {
     return json({ completed, currentVersion: sequence });
   }
 
-  pull(url) {
+  pull(url, session) {
     const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
     const limit = Math.max(1, Math.min(500, Number(url.searchParams.get("limit")) || 500));
     const itemRows = [...this.sql.exec(
@@ -469,7 +519,13 @@ export class OituSyncUser {
     ].sort((a, b) => a.version - b.version).slice(0, limit);
     const currentVersion = this.currentSequence();
     const nextVersion = changes.length ? changes[changes.length - 1].version : since;
-    return json({ changes, nextVersion, currentVersion, hasMore: nextVersion < currentVersion });
+    return json({
+      changes,
+      nextVersion,
+      currentVersion,
+      hasMore: nextVersion < currentVersion,
+      isSourceDevice: Boolean(session?.isSourceDevice)
+    });
   }
 
   downloadMedia(id) {
@@ -494,6 +550,7 @@ export class OituSyncUser {
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/api/sync/password-info" && request.method === "GET") return this.passwordInfo();
     if (url.pathname === "/api/sync/session" && request.method === "POST") return this.createSession(request);
 
     const session = await this.authenticate(request);
@@ -503,7 +560,7 @@ export class OituSyncUser {
       return json({ success: true });
     }
     if (url.pathname === "/api/sync/push" && request.method === "POST") return this.push(request, session);
-    if (url.pathname === "/api/sync/pull" && request.method === "GET") return this.pull(url);
+    if (url.pathname === "/api/sync/pull" && request.method === "GET") return this.pull(url, session);
     if (url.pathname === "/api/sync/media/push" && request.method === "POST") return this.pushMedia(request, session);
     const mediaMatch = url.pathname.match(/^\/api\/sync\/media\/([^/]+)$/);
     if (mediaMatch && request.method === "GET") return this.downloadMedia(decodeURIComponent(mediaMatch[1]));
