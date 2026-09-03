@@ -473,6 +473,10 @@ export class PortableSyncStore {
           const parent = state.get(parentKey) || puts.get(parentKey);
           if (parent?.deleted && Number(parent.client_modified_at) >= modifiedAt) continue;
         }
+        if (current && !current.deleted && Number(current.client_modified_at) === modifiedAt &&
+          current.parent_id === parentId && current.payload === payload) continue;
+      } else if (current?.deleted && Number(current.client_modified_at) === modifiedAt) {
+        continue;
       }
 
       sequence += 1;
@@ -574,6 +578,16 @@ export class PortableSyncStore {
       const key = mediaKey(entry.id);
       let current = await this.get(key);
       const modifiedAt = Math.max(1, Number(entry.modifiedAt) || Date.now());
+      const incomingName = String(entry.name || "imagem").slice(0, 255);
+      const incomingMime = String(entry.mime || "application/octet-stream").slice(0, 120);
+      const incomingDeckIds = Array.isArray(entry.deckIds)
+        ? [...new Set(entry.deckIds.filter(validIdentifier))].slice(0, 200)
+        : [];
+      const unchangedCompleteMedia = current?.complete && !current.deleted &&
+        Number(current.client_modified_at) === modifiedAt && Number(current.size) === item.size &&
+        current.name === incomingName && current.mime === incomingMime &&
+        JSON.stringify(current.deck_ids || []) === JSON.stringify(incomingDeckIds);
+      if (unchangedCompleteMedia) continue;
       if (current?.upload_id !== entry.uploadId) {
         const restartingOwnIncompleteUpload = current && !current.complete &&
           Number(current.client_modified_at) === modifiedAt && current.device_id === session.device_id;
@@ -585,15 +599,12 @@ export class PortableSyncStore {
         for (const deckId of Array.isArray(current?.deck_ids) ? current.deck_ids : []) {
           deletes.add(mediaDeckKey(deckId, entry.id));
         }
-        const deckIds = Array.isArray(entry.deckIds)
-          ? [...new Set(entry.deckIds.filter(validIdentifier))].slice(0, 200)
-          : [];
         current = {
           id: entry.id,
-          name: String(entry.name || "imagem").slice(0, 255),
-          mime: String(entry.mime || "application/octet-stream").slice(0, 120),
+          name: incomingName,
+          mime: incomingMime,
           size: item.size,
-          deck_ids: deckIds,
+          deck_ids: incomingDeckIds,
           upload_id: entry.uploadId,
           total_chunks: item.totalChunks,
           received_chunks: [],
@@ -603,7 +614,7 @@ export class PortableSyncStore {
           client_modified_at: modifiedAt,
           device_id: session.device_id
         };
-        for (const deckId of deckIds) puts.set(mediaDeckKey(deckId, entry.id), true);
+        for (const deckId of incomingDeckIds) puts.set(mediaDeckKey(deckId, entry.id), true);
       }
       const received = new Set(Array.isArray(current.received_chunks) ? current.received_chunks : []);
       for (const chunk of item.buffers) {

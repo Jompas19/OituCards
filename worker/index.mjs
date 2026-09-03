@@ -93,6 +93,9 @@ function storageFailureCode(error) {
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase("en-US");
+  if (/exceeded allowed rows written.*free tier/.test(details)) {
+    return "SYNC_STORAGE_DAILY_WRITE_LIMIT";
+  }
   if (/sqlite_full|database or disk is full|storage (?:quota|limit).*(?:reached|exceeded)/.test(details)) {
     return "SYNC_STORAGE_QUOTA_FULL";
   }
@@ -119,17 +122,14 @@ function storageFailureCode(error) {
 
 function storageFailureResponse(error, initializationPhase = null) {
   console.error("OituCards sync storage failure", error);
-  const diagnosticDetail = [error?.name, error?.message, error?.cause?.message]
-    .filter(Boolean)
-    .join(": ")
-    .replace(/https?:\/\/\S+/gi, "[url]")
-    .replace(/[A-Za-z0-9_-]{20,}/g, "[id]")
-    .slice(0, 240);
+  const diagnosticCode = storageFailureCode(error);
+  const message = diagnosticCode === "SYNC_STORAGE_DAILY_WRITE_LIMIT"
+    ? "A capacidade diária do servidor de sincronização foi atingida. Seus dados continuam salvos neste aparelho e a sincronização poderá ser retomada após a renovação do limite."
+    : "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.";
   return json({
-    error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
+    error: message,
     code: "SYNC_STORAGE_UNAVAILABLE",
-    diagnosticCode: storageFailureCode(error),
-    ...(diagnosticDetail ? { diagnosticDetail } : {}),
+    diagnosticCode,
     ...(initializationPhase ? { initializationPhase } : {})
   }, 503);
 }

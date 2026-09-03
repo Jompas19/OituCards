@@ -721,9 +721,11 @@
       };
       await saveSession();
       renderStatus("Preparando a biblioteca deste aparelho...");
-      const snapshot = await OituDB.getSyncSnapshot();
-      await queueSnapshot(snapshot);
-      await flushMutations();
+      if (result.created || result.isSourceDevice) {
+        const snapshot = await OituDB.getSyncSnapshot();
+        await queueSnapshot(snapshot);
+        await flushMutations();
+      }
       await pullChanges();
       session.lastSyncedAt = Date.now();
       await saveSession();
