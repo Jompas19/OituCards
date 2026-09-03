@@ -98,17 +98,16 @@ export class OituSyncUser {
       username TEXT NOT NULL,
       password_hash TEXT,
       password_salt TEXT,
-      source_device_id TEXT,
       seq INTEGER NOT NULL DEFAULT 0,
       failed_attempts INTEGER NOT NULL DEFAULT 0,
       locked_until INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`);
-    const profileColumns = [...this.sql.exec("PRAGMA table_info(profile)")];
-    if (!profileColumns.some((column) => column.name === "source_device_id")) {
-      this.sql.exec("ALTER TABLE profile ADD COLUMN source_device_id TEXT");
-    }
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_meta (
+      name TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       device_id TEXT NOT NULL,
@@ -149,12 +148,9 @@ export class OituSyncUser {
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_version ON items(version)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_parent ON items(kind, parent_id)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_media_version ON media(version)");
-    const profile = this.profile();
-    if (profile && !profile.source_device_id) {
+    if (this.profile() && !this.sourceDeviceId()) {
       const origin = first(this.sql.exec("SELECT device_id FROM items ORDER BY version LIMIT 1"));
-      if (origin?.device_id) {
-        this.sql.exec("UPDATE profile SET source_device_id = ? WHERE singleton = 1", origin.device_id);
-      }
+      if (origin?.device_id) this.rememberSourceDevice(origin.device_id);
     }
   }
 
@@ -167,6 +163,19 @@ export class OituSyncUser {
 
   profile() {
     return first(this.sql.exec("SELECT * FROM profile WHERE singleton = 1"));
+  }
+
+  sourceDeviceId() {
+    return first(this.sql.exec("SELECT value FROM sync_meta WHERE name = 'source_device_id'"))?.value || null;
+  }
+
+  rememberSourceDevice(deviceId) {
+    if (!validIdentifier(deviceId)) return this.sourceDeviceId();
+    this.sql.exec(
+      "INSERT OR IGNORE INTO sync_meta(name, value) VALUES('source_device_id', ?)",
+      deviceId
+    );
+    return this.sourceDeviceId();
   }
 
   passwordInfo() {
@@ -213,9 +222,10 @@ export class OituSyncUser {
       profile = this.profile();
       if (!profile) {
         this.sql.exec(
-          "INSERT INTO profile(singleton, username, password_hash, password_salt, source_device_id, seq, created_at, updated_at) VALUES(1, ?, ?, ?, ?, 0, ?, ?)",
-          username, digest, salt, deviceId, now, now
+          "INSERT INTO profile(singleton, username, password_hash, password_salt, seq, created_at, updated_at) VALUES(1, ?, ?, ?, 0, ?, ?)",
+          username, digest, salt, now, now
         );
+        this.rememberSourceDevice(deviceId);
         profile = this.profile();
         created = true;
       }
@@ -248,10 +258,7 @@ export class OituSyncUser {
         }
       }
       this.sql.exec("UPDATE profile SET failed_attempts = 0, locked_until = 0, updated_at = ? WHERE singleton = 1", now);
-      if (!profile.source_device_id) {
-        this.sql.exec("UPDATE profile SET source_device_id = ?, updated_at = ? WHERE singleton = 1", deviceId, now);
-        profile = this.profile();
-      }
+      this.rememberSourceDevice(deviceId);
     }
 
     this.sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now);
@@ -267,7 +274,7 @@ export class OituSyncUser {
       username,
       created,
       protected: Boolean(profile?.password_hash),
-      isSourceDevice: profile?.source_device_id === deviceId,
+      isSourceDevice: this.sourceDeviceId() === deviceId,
       currentVersion: Number(profile?.seq) || 0,
       expiresAt
     });
@@ -286,12 +293,8 @@ export class OituSyncUser {
       if (session) this.sql.exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash);
       return null;
     }
-    let profile = this.profile();
-    if (profile && !profile.source_device_id) {
-      this.sql.exec("UPDATE profile SET source_device_id = ?, updated_at = ? WHERE singleton = 1", session.device_id, Date.now());
-      profile = this.profile();
-    }
-    return { ...session, tokenHash, isSourceDevice: profile?.source_device_id === session.device_id };
+    const sourceDeviceId = this.rememberSourceDevice(session.device_id);
+    return { ...session, tokenHash, isSourceDevice: sourceDeviceId === session.device_id };
   }
 
   currentSequence() {
@@ -589,6 +592,14 @@ export default {
     if (!username) return json({ error: "Usuário inválido." }, 400);
 
     const id = env.SYNC_USERS.idFromName(username);
-    return env.SYNC_USERS.get(id).fetch(request);
+    try {
+      return await env.SYNC_USERS.get(id).fetch(request);
+    } catch (error) {
+      console.error("OituCards sync storage failure", error);
+      return json({
+        error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
+        code: "SYNC_STORAGE_UNAVAILABLE"
+      }, 503);
+    }
   }
 };
