@@ -92,7 +92,7 @@ function storageFailureCode(error) {
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase("en-US");
-  if (/legacy|kv-backed|storage backend|sql.*(?:not enabled|not available|not supported)|(?:not available|not supported).*sql/.test(details)) {
+  if (/legacy|kv-backed|sqlite-backed|storage backend|new_sqlite_classes|sql.*(?:not enabled|not available|not supported|only supported)|(?:not available|not supported|only supported).*sql|requires?.*sqlite/.test(details)) {
     return "SYNC_SQL_BACKEND_MISMATCH";
   }
   if (/billing|subscription|paid plan|account plan/.test(details)) return "SYNC_SQL_BILLING_REQUIRED";
