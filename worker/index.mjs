@@ -93,6 +93,11 @@ function storageFailureCode(error) {
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase("en-US");
+  if (/sqlite_full|database or disk is full|storage (?:quota|limit).*(?:reached|exceeded)/.test(details)) {
+    return "SYNC_STORAGE_QUOTA_FULL";
+  }
+  if (/sqlite_readonly|read.?only database/.test(details)) return "SYNC_STORAGE_READ_ONLY";
+  if (/sqlite_busy|database is locked/.test(details)) return "SYNC_STORAGE_BUSY";
   if (/legacy|kv-backed|sqlite-backed|storage backend|new_sqlite_classes|sql.*(?:not enabled|not available|not supported|only supported)|(?:not available|not supported|only supported).*sql|requires?.*sqlite/.test(details)) {
     return "SYNC_SQL_BACKEND_MISMATCH";
   }
