@@ -148,10 +148,6 @@ export class OituSyncUser {
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_version ON items(version)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_parent ON items(kind, parent_id)");
     this.sql.exec("CREATE INDEX IF NOT EXISTS idx_media_version ON media(version)");
-    if (this.profile() && !this.sourceDeviceId()) {
-      const origin = first(this.sql.exec("SELECT device_id FROM items ORDER BY version LIMIT 1"));
-      if (origin?.device_id) this.rememberSourceDevice(origin.device_id);
-    }
   }
 
   atomic(callback) {
@@ -176,6 +172,13 @@ export class OituSyncUser {
       deviceId
     );
     return this.sourceDeviceId();
+  }
+
+  resolveSourceDevice(fallbackDeviceId) {
+    const existing = this.sourceDeviceId();
+    if (existing) return existing;
+    const origin = first(this.sql.exec("SELECT device_id FROM items ORDER BY version LIMIT 1"));
+    return this.rememberSourceDevice(origin?.device_id || fallbackDeviceId);
   }
 
   passwordInfo() {
@@ -258,7 +261,7 @@ export class OituSyncUser {
         }
       }
       this.sql.exec("UPDATE profile SET failed_attempts = 0, locked_until = 0, updated_at = ? WHERE singleton = 1", now);
-      this.rememberSourceDevice(deviceId);
+      this.resolveSourceDevice(deviceId);
     }
 
     this.sql.exec("DELETE FROM sessions WHERE expires_at <= ?", now);
@@ -274,7 +277,7 @@ export class OituSyncUser {
       username,
       created,
       protected: Boolean(profile?.password_hash),
-      isSourceDevice: this.sourceDeviceId() === deviceId,
+      isSourceDevice: this.resolveSourceDevice(deviceId) === deviceId,
       currentVersion: Number(profile?.seq) || 0,
       expiresAt
     });
@@ -293,7 +296,7 @@ export class OituSyncUser {
       if (session) this.sql.exec("DELETE FROM sessions WHERE token_hash = ?", tokenHash);
       return null;
     }
-    const sourceDeviceId = this.rememberSourceDevice(session.device_id);
+    const sourceDeviceId = this.resolveSourceDevice(session.device_id);
     return { ...session, tokenHash, isSourceDevice: sourceDeviceId === session.device_id };
   }
 
