@@ -12,8 +12,8 @@
       { "name": "SYNC_USERS", "class_name": "OituSyncUserSQLite" }
     ]
   },
-  "migrations": [
-    { "tag": "v1-sync-users", "new_sqlite_classes": ["OituSyncUser"] },
-    { "tag": "v2-sync-users-sqlite", "new_sqlite_classes": ["OituSyncUserSQLite"] }
-  ]
+  "exports": {
+    "OituSyncUser": { "type": "durable-object", "storage": "sqlite" },
+    "OituSyncUserSQLite": { "type": "durable-object", "storage": "sqlite" }
+  }
 }
