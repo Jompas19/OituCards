@@ -102,12 +102,13 @@ function storageFailureCode(error) {
   return "SYNC_OBJECT_FAILURE";
 }
 
-function storageFailureResponse(error) {
+function storageFailureResponse(error, initializationPhase = null) {
   console.error("OituCards sync storage failure", error);
   return json({
     error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
     code: "SYNC_STORAGE_UNAVAILABLE",
-    diagnosticCode: storageFailureCode(error)
+    diagnosticCode: storageFailureCode(error),
+    ...(initializationPhase ? { initializationPhase } : {})
   }, 503);
 }
 
@@ -115,16 +116,23 @@ export class OituSyncUser {
   constructor(ctx) {
     this.ctx = ctx;
     this.sql = null;
+    this.initializationPhase = null;
   }
 
   initializeStorage() {
     if (this.sql) return;
+    this.initializationPhase = "sql-api";
     this.sql = this.ctx.storage.sql;
     this.ensureSchema();
+    this.initializationPhase = null;
   }
 
   ensureSchema() {
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS profile (
+    const run = (phase, statement) => {
+      this.initializationPhase = phase;
+      this.sql.exec(statement);
+    };
+    run("profile-table", `CREATE TABLE IF NOT EXISTS profile (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       username TEXT NOT NULL,
       password_hash TEXT,
@@ -135,17 +143,17 @@ export class OituSyncUser {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_meta (
+    run("metadata-table", `CREATE TABLE IF NOT EXISTS sync_meta (
       name TEXT PRIMARY KEY,
       value TEXT NOT NULL
     )`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (
+    run("sessions-table", `CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
       device_id TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     )`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS items (
+    run("items-table", `CREATE TABLE IF NOT EXISTS items (
       kind TEXT NOT NULL,
       id TEXT NOT NULL,
       parent_id TEXT,
@@ -156,7 +164,7 @@ export class OituSyncUser {
       device_id TEXT NOT NULL,
       PRIMARY KEY (kind, id)
     )`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS media (
+    run("media-table", `CREATE TABLE IF NOT EXISTS media (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       mime TEXT NOT NULL,
@@ -170,15 +178,15 @@ export class OituSyncUser {
       client_modified_at INTEGER NOT NULL,
       device_id TEXT NOT NULL
     )`);
-    this.sql.exec(`CREATE TABLE IF NOT EXISTS media_chunks (
+    run("media-chunks-table", `CREATE TABLE IF NOT EXISTS media_chunks (
       media_id TEXT NOT NULL,
       chunk_index INTEGER NOT NULL,
       data BLOB NOT NULL,
       PRIMARY KEY (media_id, chunk_index)
     )`);
-    this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_version ON items(version)");
-    this.sql.exec("CREATE INDEX IF NOT EXISTS idx_items_parent ON items(kind, parent_id)");
-    this.sql.exec("CREATE INDEX IF NOT EXISTS idx_media_version ON media(version)");
+    run("items-version-index", "CREATE INDEX IF NOT EXISTS idx_items_version ON items(version)");
+    run("items-parent-index", "CREATE INDEX IF NOT EXISTS idx_items_parent ON items(kind, parent_id)");
+    run("media-version-index", "CREATE INDEX IF NOT EXISTS idx_media_version ON media(version)");
   }
 
   atomic(callback) {
@@ -593,7 +601,7 @@ export class OituSyncUser {
     try {
       this.initializeStorage();
     } catch (error) {
-      return storageFailureResponse(error);
+      return storageFailureResponse(error, this.initializationPhase);
     }
     if (url.pathname === "/api/sync/password-info" && request.method === "GET") return this.passwordInfo();
     if (url.pathname === "/api/sync/session" && request.method === "POST") return this.createSession(request);
