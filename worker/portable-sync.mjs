@@ -136,6 +136,7 @@ function split(values, size) {
 export class PortableSyncStore {
   constructor(ctx) {
     this.storage = ctx.storage;
+    this.phase = null;
   }
 
   async getMany(keys) {
@@ -253,6 +254,7 @@ export class PortableSyncStore {
   }
 
   async createSession(request) {
+    this.phase = "session-parse";
     const length = Number(request.headers.get("content-length")) || 0;
     if (length > 8192) return json({ error: "Solicitação inválida." }, 413);
     let body;
@@ -276,6 +278,7 @@ export class PortableSyncStore {
     }
 
     const now = Date.now();
+    this.phase = "session-profile-read";
     let profile = await this.profile();
     let created = false;
     if (!profile) {
@@ -295,6 +298,7 @@ export class PortableSyncStore {
         created_at: now,
         updated_at: now
       };
+      this.phase = "session-profile-create";
       await this.storage.put(PROFILE_KEY, profile);
       created = true;
     } else {
@@ -310,6 +314,7 @@ export class PortableSyncStore {
           const attempts = (Number(profile.failed_attempts) || 0) + 1;
           const lockMs = attempts >= 5 ? Math.min(15 * 60 * 1000, 30000 * 2 ** Math.min(5, attempts - 5)) : 0;
           profile = { ...profile, failed_attempts: attempts, locked_until: lockMs ? now + lockMs : 0, updated_at: now };
+          this.phase = "session-profile-lock";
           await this.storage.put(PROFILE_KEY, profile);
           return json({ error: "Usuário ou senha incorretos." }, attempts >= 5 ? 429 : 403);
         }
@@ -328,13 +333,18 @@ export class PortableSyncStore {
         locked_until: 0,
         updated_at: now
       };
+      this.phase = "session-profile-update";
       await this.storage.put(PROFILE_KEY, profile);
     }
 
+    this.phase = "session-token-create";
     const token = randomToken();
+    this.phase = "session-token-hash";
     const tokenHash = await sha256(token);
     const expiresAt = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
+    this.phase = "session-token-write";
     await this.storage.put(sessionKey(tokenHash), { device_id: deviceId, expires_at: expiresAt, created_at: now });
+    this.phase = null;
     return json({
       token,
       username,

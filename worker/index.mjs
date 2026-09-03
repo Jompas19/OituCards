@@ -619,7 +619,7 @@ export class OituSyncUser extends DurableObject {
     try {
       return await this.portable.fetch(request);
     } catch (error) {
-      return storageFailureResponse(error, "portable-storage");
+      return storageFailureResponse(error, this.portable.phase || "portable-storage");
     }
   }
 }
