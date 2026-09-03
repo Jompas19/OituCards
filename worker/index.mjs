@@ -607,7 +607,12 @@ export class OituSyncUser extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/api/sync/health" && request.method === "GET") {
-      return json({ ok: true });
+      try {
+        await this.ctx.storage.get("__oitu_health_probe__");
+        return json({ ok: true, portableStorage: true });
+      } catch (error) {
+        return storageFailureResponse(error, "portable-storage-probe");
+      }
     }
     try {
       this.initializeStorage();
