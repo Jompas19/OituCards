@@ -136,12 +136,40 @@ function split(values, size) {
 export class PortableSyncStore {
   constructor(ctx) {
     this.storage = ctx.storage;
+    this.kv = ctx.storage.kv || null;
     this.phase = null;
+  }
+
+  async get(key) {
+    return this.kv ? this.kv.get(key) : this.storage.get(key);
+  }
+
+  async put(key, value) {
+    if (this.kv) {
+      this.kv.put(key, value);
+      return;
+    }
+    await this.storage.put(key, value);
+  }
+
+  async remove(key) {
+    return this.kv ? this.kv.delete(key) : this.storage.delete(key);
+  }
+
+  async list(options) {
+    return this.kv ? new Map(this.kv.list(options)) : this.storage.list(options);
   }
 
   async getMany(keys) {
     const result = new Map();
     const unique = [...new Set(keys.filter(Boolean))];
+    if (this.kv) {
+      for (const key of unique) {
+        const value = this.kv.get(key);
+        if (value !== undefined) result.set(key, value);
+      }
+      return result;
+    }
     for (const group of split(unique, 100)) {
       const rows = await this.storage.get(group);
       if (rows instanceof Map) rows.forEach((value, key) => result.set(key, value));
@@ -152,6 +180,14 @@ export class PortableSyncStore {
 
   async putMany(entries) {
     const values = entries instanceof Map ? [...entries.entries()] : entries;
+    if (this.kv) {
+      const apply = () => {
+        for (const [key, value] of values) this.kv.put(key, value);
+      };
+      if (typeof this.storage.transactionSync === "function") this.storage.transactionSync(apply);
+      else apply();
+      return;
+    }
     for (const group of split(values, 128)) {
       const record = {};
       for (const [key, value] of group) record[key] = value;
@@ -161,6 +197,12 @@ export class PortableSyncStore {
 
   async deleteMany(keys) {
     const unique = [...new Set(keys.filter(Boolean))];
+    if (this.kv) {
+      const apply = () => unique.forEach((key) => this.kv.delete(key));
+      if (typeof this.storage.transactionSync === "function") this.storage.transactionSync(apply);
+      else apply();
+      return;
+    }
     for (const group of split(unique, 128)) await this.storage.delete(group);
   }
 
@@ -168,7 +210,7 @@ export class PortableSyncStore {
     const keys = [];
     let startAfter = null;
     while (true) {
-      const rows = await this.storage.list({ prefix, ...(startAfter ? { startAfter } : {}), limit: 1000 });
+      const rows = await this.list({ prefix, ...(startAfter ? { startAfter } : {}), limit: 1000 });
       const page = [...rows.keys()];
       if (!page.length) break;
       keys.push(...page);
@@ -240,7 +282,7 @@ export class PortableSyncStore {
   }
 
   async profile() {
-    return (await this.storage.get(PROFILE_KEY)) || null;
+    return (await this.get(PROFILE_KEY)) || null;
   }
 
   async passwordInfo() {
@@ -299,7 +341,7 @@ export class PortableSyncStore {
         updated_at: now
       };
       this.phase = "session-profile-create";
-      await this.storage.put(PROFILE_KEY, profile);
+      await this.put(PROFILE_KEY, profile);
       created = true;
     } else {
       if (profile.username !== username) return json({ error: "Usuário inválido." }, 403);
@@ -315,7 +357,7 @@ export class PortableSyncStore {
           const lockMs = attempts >= 5 ? Math.min(15 * 60 * 1000, 30000 * 2 ** Math.min(5, attempts - 5)) : 0;
           profile = { ...profile, failed_attempts: attempts, locked_until: lockMs ? now + lockMs : 0, updated_at: now };
           this.phase = "session-profile-lock";
-          await this.storage.put(PROFILE_KEY, profile);
+          await this.put(PROFILE_KEY, profile);
           return json({ error: "Usuário ou senha incorretos." }, attempts >= 5 ? 429 : 403);
         }
         if (profile.password_salt !== PASSWORD_PROOF_SCHEME && passwordProof) {
@@ -334,7 +376,7 @@ export class PortableSyncStore {
         updated_at: now
       };
       this.phase = "session-profile-update";
-      await this.storage.put(PROFILE_KEY, profile);
+      await this.put(PROFILE_KEY, profile);
     }
 
     this.phase = "session-token-create";
@@ -343,7 +385,7 @@ export class PortableSyncStore {
     const tokenHash = await sha256(token);
     const expiresAt = now + SESSION_DAYS * 24 * 60 * 60 * 1000;
     this.phase = "session-token-write";
-    await this.storage.put(sessionKey(tokenHash), { device_id: deviceId, expires_at: expiresAt, created_at: now });
+    await this.put(sessionKey(tokenHash), { device_id: deviceId, expires_at: expiresAt, created_at: now });
     this.phase = null;
     return json({
       token,
@@ -362,15 +404,15 @@ export class PortableSyncStore {
     if (!token) return null;
     const tokenHash = await sha256(token);
     const key = sessionKey(tokenHash);
-    const session = await this.storage.get(key);
+    const session = await this.get(key);
     if (!session || Number(session.expires_at) <= Date.now()) {
-      if (session) await this.storage.delete(key);
+      if (session) await this.remove(key);
       return null;
     }
     let profile = await this.profile();
     if (profile && !profile.source_device_id) {
       profile = { ...profile, source_device_id: session.device_id, updated_at: Date.now() };
-      await this.storage.put(PROFILE_KEY, profile);
+      await this.put(PROFILE_KEY, profile);
     }
     return { ...session, tokenHash, isSourceDevice: profile?.source_device_id === session.device_id };
   }
@@ -530,7 +572,7 @@ export class PortableSyncStore {
     for (const item of prepared) {
       const entry = item.entry;
       const key = mediaKey(entry.id);
-      let current = await this.storage.get(key);
+      let current = await this.get(key);
       const modifiedAt = Math.max(1, Number(entry.modifiedAt) || Date.now());
       if (current?.upload_id !== entry.uploadId) {
         const restartingOwnIncompleteUpload = current && !current.complete &&
@@ -593,7 +635,7 @@ export class PortableSyncStore {
     const limit = Math.max(1, Math.min(500, Number(url.searchParams.get("limit")) || 500));
     const profile = await this.profile();
     const currentVersion = Number(profile?.seq) || 0;
-    const logs = await this.storage.list({ start: changeKey(since + 1), end: "c;", limit });
+    const logs = await this.list({ start: changeKey(since + 1), end: "c;", limit });
     const descriptors = [...logs.values()];
     const records = await this.getMany(descriptors.map((entry) => entry.type === "media"
       ? mediaKey(entry.id)
@@ -646,7 +688,7 @@ export class PortableSyncStore {
   }
 
   async downloadMedia(id) {
-    const media = await this.storage.get(mediaKey(id));
+    const media = await this.get(mediaKey(id));
     if (!media?.complete || media.deleted) return json({ error: "Imagem ainda não disponível." }, 404);
     const keys = [];
     for (let index = 0; index < Number(media.total_chunks); index += 1) keys.push(mediaChunkKey(id, index));
@@ -671,7 +713,7 @@ export class PortableSyncStore {
     const session = await this.authenticate(request);
     if (!session) return json({ error: "Sessão expirada. Conecte o perfil novamente." }, 401);
     if (url.pathname === "/api/sync/session" && request.method === "DELETE") {
-      await this.storage.delete(sessionKey(session.tokenHash));
+      await this.remove(sessionKey(session.tokenHash));
       return json({ success: true });
     }
     if (url.pathname === "/api/sync/push" && request.method === "POST") return this.push(request, session);
