@@ -119,10 +119,17 @@ function storageFailureCode(error) {
 
 function storageFailureResponse(error, initializationPhase = null) {
   console.error("OituCards sync storage failure", error);
+  const diagnosticDetail = [error?.name, error?.message, error?.cause?.message]
+    .filter(Boolean)
+    .join(": ")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[A-Za-z0-9_-]{20,}/g, "[id]")
+    .slice(0, 240);
   return json({
     error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
     code: "SYNC_STORAGE_UNAVAILABLE",
     diagnosticCode: storageFailureCode(error),
+    ...(diagnosticDetail ? { diagnosticDetail } : {}),
     ...(initializationPhase ? { initializationPhase } : {})
   }, 503);
 }
