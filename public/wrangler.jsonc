@@ -8,11 +8,12 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "SYNC_USERS", "class_name": "OituSyncUserSQLite" }
+      { "name": "SYNC_USERS", "class_name": "OituSyncUserPortable" }
     ]
   },
   "exports": {
     "OituSyncUser": { "type": "durable-object", "storage": "sqlite" },
-    "OituSyncUserSQLite": { "type": "durable-object", "storage": "sqlite" }
+    "OituSyncUserSQLite": { "type": "durable-object", "storage": "sqlite" },
+    "OituSyncUserPortable": { "type": "durable-object", "storage": "sqlite" }
   }
 }

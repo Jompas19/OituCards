@@ -631,6 +631,31 @@ export class OituSyncUser extends DurableObject {
 
 export class OituSyncUserSQLite extends OituSyncUser {}
 
+export class OituSyncUserPortable extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.ctx = ctx;
+    this.portable = new PortableSyncStore(ctx);
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/api/sync/health" && request.method === "GET") {
+      try {
+        await this.ctx.storage.get("__oitu_health_probe__");
+        return json({ ok: true, portableStorage: true });
+      } catch (error) {
+        return storageFailureResponse(error, "portable-storage-probe");
+      }
+    }
+    try {
+      return await this.portable.fetch(request);
+    } catch (error) {
+      return storageFailureResponse(error, this.portable.phase || "portable-storage");
+    }
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
