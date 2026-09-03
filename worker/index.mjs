@@ -85,6 +85,23 @@ function incomingWins(current, modifiedAt, deviceId) {
   return String(deviceId || "") > String(current.device_id || "");
 }
 
+function storageFailureCode(error) {
+  const details = [error?.name, error?.message, error?.stack, error?.cause?.message]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("en-US");
+  if (/storage\.sql|undefined.*(?:exec|sql)|(?:exec|sql).*undefined/.test(details)) return "SYNC_SQL_API_MISSING";
+  if (/no such (?:table|column)|duplicate column|sqlite|sql error|database/.test(details)) return "SYNC_SQL_SCHEMA_FAILURE";
+  if (/class.*(?:not found|not exported)|binding.*(?:missing|not found)|durable object namespace/.test(details)) {
+    return "SYNC_OBJECT_BINDING_FAILURE";
+  }
+  if (/constructor|initializ/.test(details)) return "SYNC_OBJECT_INITIALIZATION_FAILURE";
+  if (error?.overloaded || /overload|capacity/.test(details)) return "SYNC_OBJECT_OVERLOADED";
+  if (/timed?\s*out|timeout/.test(details)) return "SYNC_OBJECT_TIMEOUT";
+  if (error?.retryable) return "SYNC_OBJECT_RETRYABLE_FAILURE";
+  return "SYNC_OBJECT_FAILURE";
+}
+
 export class OituSyncUser {
   constructor(ctx) {
     this.ctx = ctx;
@@ -601,7 +618,8 @@ export default {
       console.error("OituCards sync storage failure", error);
       return json({
         error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
-        code: "SYNC_STORAGE_UNAVAILABLE"
+        code: "SYNC_STORAGE_UNAVAILABLE",
+        diagnosticCode: storageFailureCode(error)
       }, 503);
     }
   }
