@@ -102,10 +102,24 @@ function storageFailureCode(error) {
   return "SYNC_OBJECT_FAILURE";
 }
 
+function storageFailureResponse(error) {
+  console.error("OituCards sync storage failure", error);
+  return json({
+    error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
+    code: "SYNC_STORAGE_UNAVAILABLE",
+    diagnosticCode: storageFailureCode(error)
+  }, 503);
+}
+
 export class OituSyncUser {
   constructor(ctx) {
     this.ctx = ctx;
-    this.sql = ctx.storage.sql;
+    this.sql = null;
+  }
+
+  initializeStorage() {
+    if (this.sql) return;
+    this.sql = this.ctx.storage.sql;
     this.ensureSchema();
   }
 
@@ -573,6 +587,14 @@ export class OituSyncUser {
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/api/sync/health" && request.method === "GET") {
+      return json({ ok: true });
+    }
+    try {
+      this.initializeStorage();
+    } catch (error) {
+      return storageFailureResponse(error);
+    }
     if (url.pathname === "/api/sync/password-info" && request.method === "GET") return this.passwordInfo();
     if (url.pathname === "/api/sync/session" && request.method === "POST") return this.createSession(request);
 
@@ -615,12 +637,7 @@ export default {
     try {
       return await env.SYNC_USERS.get(id).fetch(request);
     } catch (error) {
-      console.error("OituCards sync storage failure", error);
-      return json({
-        error: "O armazenamento da sincronização está temporariamente indisponível. Tente novamente em instantes.",
-        code: "SYNC_STORAGE_UNAVAILABLE",
-        diagnosticCode: storageFailureCode(error)
-      }, 503);
+      return storageFailureResponse(error);
     }
   }
 };
