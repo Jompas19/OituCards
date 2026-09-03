@@ -132,6 +132,7 @@ export class OituSyncUser {
       this.initializationPhase = phase;
       this.sql.exec(statement);
     };
+    run("sql-probe", "SELECT 1");
     run("profile-table", `CREATE TABLE IF NOT EXISTS profile (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       username TEXT NOT NULL,
