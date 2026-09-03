@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { PortableSyncStore } from "./portable-sync.mjs";
 
 const SESSION_DAYS = 90;
 const MAX_PUSH_BYTES = 5 * 1024 * 1024;
@@ -127,6 +128,7 @@ export class OituSyncUser extends DurableObject {
     this.ctx = ctx;
     this.sql = null;
     this.initializationPhase = null;
+    this.portable = new PortableSyncStore(ctx);
   }
 
   initializeStorage() {
@@ -615,25 +617,10 @@ export class OituSyncUser extends DurableObject {
       }
     }
     try {
-      this.initializeStorage();
+      return await this.portable.fetch(request);
     } catch (error) {
-      return storageFailureResponse(error, this.initializationPhase);
+      return storageFailureResponse(error, "portable-storage");
     }
-    if (url.pathname === "/api/sync/password-info" && request.method === "GET") return this.passwordInfo();
-    if (url.pathname === "/api/sync/session" && request.method === "POST") return this.createSession(request);
-
-    const session = await this.authenticate(request);
-    if (!session) return json({ error: "Sessão expirada. Conecte o perfil novamente." }, 401);
-    if (url.pathname === "/api/sync/session" && request.method === "DELETE") {
-      this.sql.exec("DELETE FROM sessions WHERE token_hash = ?", session.tokenHash);
-      return json({ success: true });
-    }
-    if (url.pathname === "/api/sync/push" && request.method === "POST") return this.push(request, session);
-    if (url.pathname === "/api/sync/pull" && request.method === "GET") return this.pull(url, session);
-    if (url.pathname === "/api/sync/media/push" && request.method === "POST") return this.pushMedia(request, session);
-    const mediaMatch = url.pathname.match(/^\/api\/sync\/media\/([^/]+)$/);
-    if (mediaMatch && request.method === "GET") return this.downloadMedia(decodeURIComponent(mediaMatch[1]));
-    return json({ error: "Rota não encontrada." }, 404);
   }
 }
 
