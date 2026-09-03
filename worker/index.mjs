@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 const SESSION_DAYS = 90;
 const MAX_PUSH_BYTES = 5 * 1024 * 1024;
 const MAX_MEDIA_PUSH_BYTES = 9 * 1024 * 1024;
@@ -112,8 +114,9 @@ function storageFailureResponse(error, initializationPhase = null) {
   }, 503);
 }
 
-export class OituSyncUser {
-  constructor(ctx) {
+export class OituSyncUser extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
     this.ctx = ctx;
     this.sql = null;
     this.initializationPhase = null;
