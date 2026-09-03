@@ -92,6 +92,13 @@ function storageFailureCode(error) {
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase("en-US");
+  if (/legacy|kv-backed|storage backend|sql.*(?:not enabled|not available|not supported)|(?:not available|not supported).*sql/.test(details)) {
+    return "SYNC_SQL_BACKEND_MISMATCH";
+  }
+  if (/billing|subscription|paid plan|account plan/.test(details)) return "SYNC_SQL_BILLING_REQUIRED";
+  if (/different request|request context|cannot perform i\/o/.test(details)) return "SYNC_SQL_IO_CONTEXT_FAILURE";
+  if (/quota|usage limit|storage limit/.test(details)) return "SYNC_SQL_QUOTA_FAILURE";
+  if (/internal (?:error|failure)|platform error/.test(details)) return "SYNC_PLATFORM_INTERNAL_FAILURE";
   if (/storage\.sql|undefined.*(?:exec|sql)|(?:exec|sql).*undefined/.test(details)) return "SYNC_SQL_API_MISSING";
   if (/no such (?:table|column)|duplicate column|sqlite|sql error|database/.test(details)) return "SYNC_SQL_SCHEMA_FAILURE";
   if (/class.*(?:not found|not exported)|binding.*(?:missing|not found)|durable object namespace/.test(details)) {
