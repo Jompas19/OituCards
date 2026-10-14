@@ -177,14 +177,14 @@
       <div id="importDeckNameRow" class="import-deck-name-row hidden">
         <label class="field-label" for="importDeckNameInput">Nome do baralho</label>
         <input id="importDeckNameInput" class="text-input" type="text" maxlength="120" autocomplete="off" />
-        <span class="field-hint">Para arquivos de texto/JSON. Em pacotes do Anki, os nomes dos baralhos são preservados automaticamente.</span>
+        <span class="field-hint">Para CSV/TSV/TXT sem caminho na terceira coluna e para JSON. Caminhos no formato PASTA::SUBPASTA::BARALHO têm prioridade.</span>
       </div>
 
       <div class="import-info-box">
         <strong>Como a importação funciona</strong>
         <ul>
           <li><b>APKG/COLPKG:</b> importa cards, subbaralhos e imagens incorporadas. Pacotes antigos e modernos do Anki são reconhecidos.</li>
-          <li><b>CSV/TSV/TXT:</b> usa as duas primeiras colunas como Frente e Verso; cabeçalhos comuns e cabeçalhos de exportação do Anki são detectados.</li>
+          <li><b>CSV/TSV/TXT:</b> usa as duas primeiras colunas como Frente e Verso. Uma terceira coluna no formato <code>PASTA::SUBPASTA::BARALHO</code> cria a hierarquia automaticamente; <code>_</code> vira espaço.</li>
           <li><b>JSON:</b> aceita cards com campos como <code>front/back</code>, <code>question/answer</code> ou <code>frontHtml/backHtml</code>.</li>
         </ul>
         <p id="importFormatHint" class="import-format-hint">Selecione um arquivo para começar.</p>
@@ -444,6 +444,20 @@
     return plainTextToHtml(raw);
   }
 
+  function normalizeImportedDeckPath(value) {
+    return String(value ?? "")
+      .split("::")
+      .map((part) => part.replace(/_/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .join("::");
+  }
+
+  function looksLikeImportedDeckPath(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw.includes("::")) return false;
+    return raw.split("::").map((part) => part.trim()).filter(Boolean).length >= 2;
+  }
+
   async function parseTextDeck(file) {
     const text = await readTextFile(file);
     const { headers: ankiHeaders, body } = splitAnkiHeaders(text);
@@ -467,31 +481,56 @@
 
     let frontIndex = 0;
     let backIndex = 1;
+    let pathIndex = -1;
     if (headerRow) {
       const detectedFront = findHeaderIndex(headerRow, ["front", "frente", "question", "pergunta", "term", "termo", "prompt"]);
       const detectedBack = findHeaderIndex(headerRow, ["back", "verso", "answer", "resposta", "definition", "definicao"]);
+      const detectedPath = findHeaderIndex(headerRow, ["deckpath", "deck path", "caminho", "caminho do baralho", "path", "deck", "baralho", "tags", "tag"]);
       if (detectedFront >= 0) frontIndex = detectedFront;
       if (detectedBack >= 0) backIndex = detectedBack;
+      if (detectedPath >= 0 && detectedPath !== frontIndex && detectedPath !== backIndex) pathIndex = detectedPath;
     }
 
     const htmlEnabled = String(ankiHeaders.html || "").toLowerCase() === "true";
-    const cards = [];
+    const requestedName = $("#importDeckNameInput")?.value.trim();
+    const fallbackDeckName = requestedName || ankiHeaders.deck || filenameWithoutExtension(file.name);
+    const groups = new Map();
+
     for (const row of dataRows) {
       if (row.length < 2) continue;
+
+      let rowPathIndex = pathIndex;
+      if (rowPathIndex < 0) {
+        for (let index = 0; index < row.length; index += 1) {
+          if (index === frontIndex || index === backIndex) continue;
+          if (looksLikeImportedDeckPath(row[index])) {
+            rowPathIndex = index;
+            break;
+          }
+        }
+      }
+
+      const rawPath = rowPathIndex >= 0 ? row[rowPathIndex] : "";
+      const deckPath = looksLikeImportedDeckPath(rawPath) ? normalizeImportedDeckPath(rawPath) : "";
+
       const front = fieldToHtml(row[frontIndex] ?? row[0], htmlEnabled);
       let backRaw = row[backIndex] ?? row[1];
       if (!headerRow && row.length > 2 && backIndex === 1) {
-        backRaw = row.slice(1).join(htmlEnabled ? "<br><br>" : "\n\n");
+        backRaw = row.slice(1).filter((_, offset) => offset + 1 !== rowPathIndex).join(htmlEnabled ? "<br><br>" : "\n\n");
       }
+
       const back = fieldToHtml(backRaw, htmlEnabled);
       if (!hasMeaningfulContent(front) || !hasMeaningfulContent(back)) continue;
-      cards.push({ frontHtml: front, backHtml: back });
+
+      const deckName = deckPath || fallbackDeckName;
+      const groupKey = String(deckName).trim().toLocaleLowerCase();
+      if (!groups.has(groupKey)) groups.set(groupKey, { name: deckName, cards: [] });
+      groups.get(groupKey).cards.push({ frontHtml: front, backHtml: back });
     }
 
-    if (!cards.length) throw new Error("Não encontrei linhas válidas com Frente e Verso.");
-    const requestedName = $("#importDeckNameInput")?.value.trim();
-    const deckName = requestedName || ankiHeaders.deck || filenameWithoutExtension(file.name);
-    return [{ name: deckName, cards }];
+    const decks = [...groups.values()].filter((deck) => deck.cards.length);
+    if (!decks.length) throw new Error("Não encontrei linhas válidas com Frente e Verso.");
+    return decks;
   }
 
   function genericCardPayload(item) {
