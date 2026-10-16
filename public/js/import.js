@@ -444,10 +444,17 @@
     return plainTextToHtml(raw);
   }
 
+  function normalizeImportedDeckComponent(value) {
+    return String(value ?? "")
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function normalizeImportedDeckPath(value) {
     return String(value ?? "")
       .split("::")
-      .map((part) => part.replace(/_/g, " ").replace(/\s+/g, " ").trim())
+      .map(normalizeImportedDeckComponent)
       .filter(Boolean)
       .join("::");
   }
@@ -455,7 +462,38 @@
   function looksLikeImportedDeckPath(value) {
     const raw = String(value ?? "").trim();
     if (!raw.includes("::")) return false;
-    return raw.split("::").map((part) => part.trim()).filter(Boolean).length >= 2;
+    return raw.split("::").map(normalizeImportedDeckComponent).filter(Boolean).length >= 2;
+  }
+
+  function importedDeckPathFromRow(row, configuredPathIndex, frontIndex, backIndex) {
+    if (!Array.isArray(row)) return { index: -1, path: "" };
+
+    // CSVs exportados para o Anki costumam usar Frente, Verso, Tags.
+    // Quando a terceira coluna contém PASTA::SUBPASTA::BARALHO, ela é
+    // metadado de organização e nunca deve entrar no verso do flashcard.
+    if (row.length >= 3 && frontIndex === 0 && backIndex === 1 && looksLikeImportedDeckPath(row[2])) {
+      return { index: 2, path: normalizeImportedDeckPath(row[2]) };
+    }
+
+    if (
+      configuredPathIndex >= 0 &&
+      configuredPathIndex !== frontIndex &&
+      configuredPathIndex !== backIndex &&
+      looksLikeImportedDeckPath(row[configuredPathIndex])
+    ) {
+      return {
+        index: configuredPathIndex,
+        path: normalizeImportedDeckPath(row[configuredPathIndex])
+      };
+    }
+
+    for (let index = 0; index < row.length; index += 1) {
+      if (index === frontIndex || index === backIndex) continue;
+      if (!looksLikeImportedDeckPath(row[index])) continue;
+      return { index, path: normalizeImportedDeckPath(row[index]) };
+    }
+
+    return { index: -1, path: "" };
   }
 
   async function parseTextDeck(file) {
@@ -499,24 +537,17 @@
     for (const row of dataRows) {
       if (row.length < 2) continue;
 
-      let rowPathIndex = pathIndex;
-      if (rowPathIndex < 0) {
-        for (let index = 0; index < row.length; index += 1) {
-          if (index === frontIndex || index === backIndex) continue;
-          if (looksLikeImportedDeckPath(row[index])) {
-            rowPathIndex = index;
-            break;
-          }
-        }
-      }
-
-      const rawPath = rowPathIndex >= 0 ? row[rowPathIndex] : "";
-      const deckPath = looksLikeImportedDeckPath(rawPath) ? normalizeImportedDeckPath(rawPath) : "";
+      const detectedPath = importedDeckPathFromRow(row, pathIndex, frontIndex, backIndex);
+      const rowPathIndex = detectedPath.index;
+      const deckPath = detectedPath.path;
 
       const front = fieldToHtml(row[frontIndex] ?? row[0], htmlEnabled);
       let backRaw = row[backIndex] ?? row[1];
       if (!headerRow && row.length > 2 && backIndex === 1) {
-        backRaw = row.slice(1).filter((_, offset) => offset + 1 !== rowPathIndex).join(htmlEnabled ? "<br><br>" : "\n\n");
+        backRaw = row
+          .slice(1)
+          .filter((_, offset) => offset + 1 !== rowPathIndex)
+          .join(htmlEnabled ? "<br><br>" : "\n\n");
       }
 
       const back = fieldToHtml(backRaw, htmlEnabled);
@@ -915,7 +946,10 @@
   }
 
   function folderLookupKey(parentId, name) {
-    return `${parentId || "root"}\u0000${String(name || "").trim().toLocaleLowerCase()}`;
+    const normalizedName = normalizeImportedDeckComponent(name)
+      .normalize("NFC")
+      .toLocaleLowerCase("pt-BR");
+    return `${parentId || "root"}\u0000${normalizedName}`;
   }
 
   function inheritedReviewFields(folder) {
