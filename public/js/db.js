@@ -1178,6 +1178,17 @@
     });
   }
 
+  async function hasLocalLibraryData() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(["decks", "cards", "media"], "readonly");
+      const probes = ["decks", "cards", "media"].map((name) => tx.objectStore(name).getAllKeys(null, 1));
+      tx.oncomplete = () => resolve(probes.some((probe) => probe.result?.length));
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Não foi possível verificar os dados locais."));
+    });
+  }
+
   async function clearLocalLibrary() {
     const db = await openDB();
     await new Promise((resolve, reject) => {
@@ -1298,7 +1309,7 @@
     addFolder, updateFolder, getFolder, getFolders, deleteFolder,
     addCard, addCardsBatch, updateCard, getCard, getCardsByDeck, getCardSummariesByDeck, getCardSummariesForDecks, resetDeckProgressBatch, deleteCard, seedCardsByDeck,
     putMediaBatch, getMediaBatch, getMediaRecord, getMissingMediaIds,
-    getSyncSnapshot, applySyncChanges, setSyncSink, clearLocalLibrary
+    getSyncSnapshot, applySyncChanges, setSyncSink, hasLocalLibraryData, clearLocalLibrary
   };
   window.OituMedia = { hydrate: hydrateMedia, setHtml: setMediaHtml, prefetch: prefetchMediaHtml, getRecords: getMediaBatch };
 })();
