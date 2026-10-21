@@ -4,6 +4,8 @@
   const SYNC_DB_NAME = "OituCardsSyncDB";
   const SYNC_DB_VERSION = 2;
   const POLL_INTERVAL_MS = 5000;
+  const IDLE_POLL_INTERVAL_MS = 45000;
+  const ACTIVE_WINDOW_MS = 60000;
   const MUTATION_BATCH_LIMIT = 250;
   const MUTATION_BATCH_BYTES = 3_800_000;
   const MEDIA_PACKET_BYTES = 7 * 1024 * 1024;
@@ -32,6 +34,8 @@
   let pullPromise = null;
   let profileChanging = false;
   let sessionLoaded = false;
+  let lastInteractionAt = Date.now();
+  let lastPollAt = 0;
   const pendingCaptures = [];
   const mediaRequests = new Map();
   const mediaRetryAt = new Map();
@@ -358,12 +362,35 @@
     while (session && navigator.onLine !== false) {
       const records = await getMutationBatch();
       if (!records.length) return;
-      await apiJSON("/api/sync/push", {
+      const result = await apiJSON("/api/sync/push", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mutations: records.map((record) => record.mutation) })
       });
-      await deleteMatching("queue", records, "key");
+      if (!Array.isArray(result?.results) || result.results.length !== records.length) {
+        throw new Error("O servidor ainda não confirma cada alteração. Os dados locais foram preservados.");
+      }
+      const confirmed = [];
+      const conflicts = [];
+      const conflictRecords = [];
+      let invalid = false;
+      result.results.forEach((ack, index) => {
+        if (ack?.status === "applied" || ack?.status === "unchanged") confirmed.push(records[index]);
+        else if (ack?.status === "conflict" && ack.change) {
+          conflicts.push(ack.change);
+          conflictRecords.push(records[index]);
+        } else invalid = true;
+      });
+      if (conflicts.length) {
+        applyingRemote = true;
+        try {
+          const applied = await OituDB.applySyncChanges(conflicts);
+          if (applied === conflicts.length) confirmed.push(...conflictRecords);
+          else invalid = true;
+        } finally { applyingRemote = false; }
+      }
+      await deleteMatching("queue", confirmed, "key");
+      if (invalid) throw new Error("Algumas alterações não puderam ser conciliadas. Os dados locais foram preservados.");
     }
   }
 
@@ -653,7 +680,9 @@
       $("#syncDeviceRole").textContent = session?.isSourceDevice === true
         ? "Dispositivo de origem · os dados locais serão preservados ao desconectar."
         : session?.isSourceDevice === false
-          ? "Dispositivo secundário · os dados locais serão removidos ao desconectar."
+          ? (session.cleanupOnDisconnect === true
+            ? "Dispositivo secundário · dados desta sessão serão removidos ao desconectar."
+            : "Dispositivo secundário · dados locais preservados ao desconectar.")
           : "Identificando a função deste dispositivo...";
     }
     if ($("#syncStatusText")) $("#syncStatusText").textContent = statusText(override);
@@ -686,6 +715,7 @@
       }
       let passwordProof = "";
       let legacyPasswordProof = "";
+      let legacyRawPasswordRequired = false;
       if (password) {
         const passwordInfoPromise = apiJSON("/api/sync/password-info", {
           auth: false,
@@ -693,6 +723,7 @@
         }).catch(() => null);
         const passwordProofPromise = derivePasswordProof(username, password);
         const passwordInfo = await passwordInfoPromise;
+        legacyRawPasswordRequired = !passwordInfo || passwordInfo.scheme === "legacy-pbkdf2";
         if (passwordInfo?.scheme === "legacy-pbkdf2" && passwordInfo.salt) {
           [passwordProof, legacyPasswordProof] = await Promise.all([
             passwordProofPromise,
@@ -706,8 +737,14 @@
         auth: false,
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, passwordProof, legacyPasswordProof, deviceId })
+        body: JSON.stringify({ username, password: legacyRawPasswordRequired ? password : "", passwordProof, legacyPasswordProof, deviceId })
       });
+      const isSecondary = result.isSourceDevice === false;
+      const localHasData = isSecondary ? await OituDB.hasLocalLibraryData() : false;
+      if (isSecondary && localHasData) {
+        await revokeSession({ token: result.token, username: result.username, deviceId });
+        throw new Error("Este navegador já contém flashcards. Exporte e limpe a biblioteca local antes de conectar outra conta, para evitar misturar ou perder dados.");
+      }
       await clearStores(["queue", "mediaQueue"]);
       session = {
         username: result.username,
@@ -715,6 +752,7 @@
         deviceId,
         protected: Boolean(result.protected),
         isSourceDevice: typeof result.isSourceDevice === "boolean" ? result.isSourceDevice : null,
+        cleanupOnDisconnect: isSecondary && !localHasData,
         expiresAt: Number(result.expiresAt) || 0,
         lastVersion: 0,
         lastSyncedAt: 0
@@ -753,7 +791,7 @@
 
   function openDisconnectModal() {
     if (!session || profileChanging) return;
-    const secondary = session.isSourceDevice === false;
+    const secondary = session.isSourceDevice === false && session.cleanupOnDisconnect === true;
     const source = session.isSourceDevice === true;
     if ($("#syncDisconnectTitle")) {
       $("#syncDisconnectTitle").textContent = secondary
@@ -765,7 +803,7 @@
         ? "Este não é o dispositivo de origem. Todos os cards, imagens e ajustes pessoais salvos neste navegador serão removidos. Os dados sincronizados permanecerão intactos para você acessar novamente."
         : source
           ? "A sincronização será encerrada, mas sua biblioteca e suas imagens permanecerão salvas neste dispositivo de origem."
-          : "Ainda não foi possível confirmar a função deste dispositivo. Por segurança, a sincronização será encerrada sem remover a biblioteca local.";
+          : "A sincronização será encerrada sem apagar os flashcards deste navegador. Bibliotecas de sessões antigas não são apagadas automaticamente.";
     }
     if ($("#syncDisconnectAccept")) {
       $("#syncDisconnectAccept").textContent = secondary ? "Desconectar e limpar" : "Desconectar";
@@ -782,7 +820,7 @@
     profileChanging = true;
     if ($("#syncDisconnectAccept")) $("#syncDisconnectAccept").disabled = true;
     const previous = session;
-    const secondary = previous?.isSourceDevice === false;
+    const secondary = previous?.isSourceDevice === false && previous?.cleanupOnDisconnect === true;
     session = null;
     clearTimeout(flushTimer);
     clearTimeout(backgroundMediaTimer);
@@ -861,7 +899,17 @@
       scheduleBackgroundMedia(1200);
     }
     clearInterval(pollTimer);
-    pollTimer = setInterval(() => syncNow(), POLL_INTERVAL_MS);
+    const recordInteraction = () => { lastInteractionAt = Date.now(); };
+    document.addEventListener("pointerdown", recordInteraction, { passive: true });
+    document.addEventListener("keydown", recordInteraction, { passive: true });
+    pollTimer = setInterval(() => {
+      if (!session || document.visibilityState === "hidden" || navigator.onLine === false) return;
+      const now = Date.now();
+      const interval = now - lastInteractionAt < ACTIVE_WINDOW_MS ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+      if (now - lastPollAt < interval) return;
+      lastPollAt = now;
+      syncNow();
+    }, POLL_INTERVAL_MS);
     window.addEventListener("online", () => {
       renderStatus();
       scheduleSync(100);
@@ -870,7 +918,11 @@
     window.addEventListener("offline", () => renderStatus());
     window.addEventListener("focus", () => syncNow());
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") syncNow();
+      if (document.visibilityState === "visible") {
+        lastInteractionAt = Date.now();
+        lastPollAt = Date.now();
+        syncNow();
+      }
     });
   }
 
