@@ -86,6 +86,18 @@
       writeStore(store);
     }
 
+    function markSessionEnded(sessionId) {
+      const store = readStore();
+      const endedAt = new Date().toISOString();
+      let changed = false;
+      for (const entry of Object.values(store.entries)) {
+        if (entry?.sessionId !== sessionId || entry.commitAt) continue;
+        entry.commitAt = endedAt;
+        changed = true;
+      }
+      if (changed) writeStore(store);
+    }
+
     function committedReviewCount(card) {
       if (Number.isInteger(card?.reviewCount) && card.reviewCount >= 0) return card.reviewCount;
       const history = Array.isArray(card?.ratingHistory) ? card.ratingHistory : [];
@@ -124,6 +136,7 @@
     async function flushSession(sessionId) {
       if (!sessionId) return;
       if (locks.has(sessionId)) return locks.get(sessionId);
+      markSessionEnded(sessionId);
 
       const task = (async () => {
         await waitForReviewPipeline();
@@ -152,7 +165,7 @@
           let deck = null;
           try { deck = card.deckId ? await OituDB.getDeck(card.deckId) : null; } catch (_) {}
           const intervalDays = fallbackIntervalDays(card, deck, entry.rating);
-          const reviewedAt = entry.ratedAt || new Date().toISOString();
+          const reviewedAt = entry.commitAt || entry.ratedAt || new Date().toISOString();
           const nextReviewAt = fallbackNextReview(intervalDays, reviewedAt);
           const patch = {
             reviewStatus: entry.rating,
