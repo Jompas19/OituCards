@@ -31,10 +31,190 @@
     reviewSettingsDeckId: null,
     redoMode: "none",
     deckLoads: new Map(),
-    renderToken: 0
+    renderToken: 0,
+    reviewSessionId: null,
+    reviewSessionFlushPromise: null
   };
 
   const $ = (selector) => document.querySelector(selector);
+
+  function ensureDeferredReviewRatings() {
+    if (window.OituReviewSessionDrafts) return window.OituReviewSessionDrafts;
+
+    const STORAGE_KEY = "OituCardsDeferredReviewRatingsV1";
+    const locks = new Map();
+
+    function readStore() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? { entries: parsed.entries && typeof parsed.entries === "object" ? parsed.entries : {} }
+          : { entries: {} };
+      } catch (_) {
+        return { entries: {} };
+      }
+    }
+
+    function writeStore(store) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(store || { entries: {} })); } catch (_) {}
+    }
+
+    function createSession(scope = "study") {
+      return scope + "-" + Date.now().toString(36) + "-" + crypto.randomUUID();
+    }
+
+    function stage(sessionId, card, rating) {
+      if (!sessionId || !card?.id || !RATINGS.includes(rating)) return;
+      const store = readStore();
+      const key = sessionId + ":" + card.id;
+      const previous = store.entries[key];
+      store.entries[key] = {
+        sessionId,
+        cardId: card.id,
+        deckId: card.deckId || previous?.deckId || null,
+        rating,
+        ratedAt: new Date().toISOString(),
+        token: previous?.token || crypto.randomUUID()
+      };
+      writeStore(store);
+    }
+
+    function removeEntry(key) {
+      const store = readStore();
+      if (!Object.prototype.hasOwnProperty.call(store.entries, key)) return;
+      delete store.entries[key];
+      writeStore(store);
+    }
+
+    function committedReviewCount(card) {
+      if (Number.isInteger(card?.reviewCount) && card.reviewCount >= 0) return card.reviewCount;
+      const history = Array.isArray(card?.ratingHistory) ? card.ratingHistory : [];
+      if (card?.lastReviewedAt || card?.nextReviewAt || RATINGS.includes(card?.lastRating) ||
+          history.some((item) => RATINGS.includes(item?.rating))) return 1;
+      return 0;
+    }
+
+    function fallbackIntervalDays(card, deck, rating) {
+      const settings = deck?.reviewSettings || {};
+      const intervals = settings.newIntervals || settings || {};
+      const multipliers = settings.multipliers || {};
+      const max = Math.max(1, Number(settings.maxIntervalDays) || 180);
+      const initial = Math.max(1, Number(intervals[rating]) || ({ hard: 1, medium: 2, good: 4, easy: 7 })[rating]);
+      if (committedReviewCount(card) === 0) return Math.min(max, initial);
+      const current = Math.max(1, Number(card?.currentIntervalDays) || initial);
+      return Math.max(1, Math.min(max, Math.round(current * Math.max(1, Number(multipliers[rating]) || 1))));
+    }
+
+    function fallbackNextReview(days, ratedAt) {
+      const base = ratedAt ? new Date(ratedAt) : new Date();
+      const target = Number.isNaN(base.getTime()) ? new Date() : new Date(base);
+      target.setHours(0, 0, 0, 0);
+      target.setDate(target.getDate() + Math.max(1, Math.round(days)));
+      return target.toISOString();
+    }
+
+    async function waitForReviewPipeline(attempt = 0) {
+      const dbReady = window.OituDB?.getCard && window.OituDB?.updateCard;
+      const timeReady = window.__oitucardsReviewTimeUnits || window.__oitucardsReviewTimeAuthorityV1;
+      if (dbReady && (timeReady || attempt >= 120)) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return waitForReviewPipeline(attempt + 1);
+    }
+
+    async function flushSession(sessionId) {
+      if (!sessionId) return;
+      if (locks.has(sessionId)) return locks.get(sessionId);
+
+      const task = (async () => {
+        await waitForReviewPipeline();
+        const snapshot = readStore();
+        const entries = Object.entries(snapshot.entries)
+          .filter(([, entry]) => entry?.sessionId === sessionId);
+
+        for (const [key, entry] of entries) {
+          if (!RATINGS.includes(entry?.rating)) {
+            removeEntry(key);
+            continue;
+          }
+
+          const card = await OituDB.getCard(entry.cardId);
+          if (!card) {
+            removeEntry(key);
+            continue;
+          }
+
+          const previous = Array.isArray(card.ratingHistory) ? card.ratingHistory : [];
+          if (previous.some((item) => item?.sessionCommitId === entry.token)) {
+            removeEntry(key);
+            continue;
+          }
+
+          let deck = null;
+          try { deck = card.deckId ? await OituDB.getDeck(card.deckId) : null; } catch (_) {}
+          const intervalDays = fallbackIntervalDays(card, deck, entry.rating);
+          const reviewedAt = entry.ratedAt || new Date().toISOString();
+          const nextReviewAt = fallbackNextReview(intervalDays, reviewedAt);
+          const patch = {
+            reviewStatus: entry.rating,
+            lastRating: entry.rating,
+            lastReviewedAt: reviewedAt,
+            reviewCount: committedReviewCount(card) + 1,
+            currentIntervalDays: intervalDays,
+            nextReviewAt,
+            ratingHistory: [
+              ...previous,
+              {
+                rating: entry.rating,
+                at: reviewedAt,
+                intervalDays,
+                nextReviewAt,
+                sessionCommitId: entry.token
+              }
+            ].slice(-150)
+          };
+
+          await OituDB.updateCard(card.id, patch);
+          removeEntry(key);
+        }
+
+        try { window.OituReviewFinalAuthority?.refreshCounts?.(); } catch (_) {}
+      })().finally(() => locks.delete(sessionId));
+
+      locks.set(sessionId, task);
+      return task;
+    }
+
+    async function flushAll() {
+      const store = readStore();
+      const sessions = [...new Set(
+        Object.values(store.entries).map((entry) => entry?.sessionId).filter(Boolean)
+      )];
+      for (const sessionId of sessions) await flushSession(sessionId);
+    }
+
+    function recoverPending(attempt = 0) {
+      const store = readStore();
+      if (!Object.keys(store.entries).length) return;
+      const ready = window.OituDB?.getCard && window.OituDB?.updateCard &&
+        (window.__oitucardsReviewTimeUnits || window.__oitucardsReviewTimeAuthorityV1);
+      if (ready || attempt >= 160) {
+        void flushAll().catch((error) => console.error("OituCards: falha ao consolidar avaliações pendentes.", error));
+        return;
+      }
+      setTimeout(() => recoverPending(attempt + 1), 50);
+    }
+
+    window.addEventListener("pagehide", () => {
+      void flushAll().catch(() => {});
+    });
+
+    const api = { createSession, stage, flushSession, flushAll };
+    window.OituReviewSessionDrafts = api;
+    setTimeout(() => recoverPending(), 0);
+    return api;
+  }
+
+  const deferredRatings = ensureDeferredReviewRatings();
 
   const studyMarkup = `
     <section id="studyConfigView" class="view">
@@ -432,9 +612,27 @@
     };
   }
 
-  function goHome() {
+  async function flushCurrentReviewSession() {
+    const sessionId = state.reviewSessionId;
+    if (!sessionId) return;
+    if (!state.reviewSessionFlushPromise) {
+      state.reviewSessionFlushPromise = deferredRatings.flushSession(sessionId);
+    }
+    try {
+      await state.reviewSessionFlushPromise;
+    } finally {
+      if (state.reviewSessionId === sessionId) state.reviewSessionId = null;
+      state.reviewSessionFlushPromise = null;
+    }
+  }
+
+  async function goHome() {
     stopTimer();
+    const wasActive = state.sessionActive;
     state.sessionActive = false;
+    if (wasActive || state.reviewSessionId) {
+      try { await flushCurrentReviewSession(); } catch (error) { console.error(error); }
+    }
     $("#homeButton")?.click();
   }
 
@@ -590,7 +788,7 @@
   async function renderCurrent() {
     const entry = currentEntry();
     if (!entry) {
-      finishStudy();
+      void finishStudy();
       return;
     }
     const token = ++state.renderToken;
@@ -637,28 +835,9 @@
   }
 
   async function persistRating(card, rating) {
-    if (state.redoMode === "keep") return;
-    const now = new Date().toISOString();
-    const previous = Array.isArray(card.ratingHistory) ? card.ratingHistory : [];
-    if (rating === "repeat") {
-      const patch = { ratingHistory: [...previous, { rating, at: now, sessionOnly: true }].slice(-150) };
-      await OituDB.updateCard(card.id, patch);
-      Object.assign(card, patch);
-      return;
-    }
-    const intervalDays = nextIntervalDays(card, rating);
-    const nextReviewAt = reviewDateAfterDays(intervalDays).toISOString();
-    const patch = {
-      reviewStatus: rating,
-      lastRating: rating,
-      lastReviewedAt: now,
-      reviewCount: getReviewCount(card) + 1,
-      currentIntervalDays: intervalDays,
-      nextReviewAt,
-      ratingHistory: [...previous, { rating, at: now, intervalDays, nextReviewAt }].slice(-150)
-    };
-    await OituDB.updateCard(card.id, patch);
-    Object.assign(card, patch);
+    if (state.redoMode === "keep" || rating === "repeat" || !RATINGS.includes(rating)) return;
+    if (!state.reviewSessionId) state.reviewSessionId = deferredRatings.createSession("single");
+    deferredRatings.stage(state.reviewSessionId, card, rating);
   }
 
   function findNextPendingIndex(after) {
@@ -692,17 +871,18 @@
     updateProgress();
     const nextIndex = findNextPendingIndex(state.currentIndex);
     if (nextIndex === -1) {
-      finishStudy();
+      await finishStudy();
       return;
     }
     state.currentIndex = nextIndex;
     renderCurrent();
   }
 
-  function finishStudy() {
+  async function finishStudy() {
     const elapsed = currentElapsedMs();
     state.sessionActive = false;
     stopTimer();
+    try { await flushCurrentReviewSession(); } catch (error) { console.error(error); }
     $("#studyWorkspace").classList.add("hidden");
     $("#studyComplete").classList.remove("hidden");
     updateProgress();
@@ -778,6 +958,7 @@
   }
 
   async function openConfig(deckId) {
+    try { await flushCurrentReviewSession(); } catch (error) { console.error(error); }
     stopTimer();
     state.sessionActive = false;
     state.quickEditing = false;
@@ -852,6 +1033,8 @@
     state.currentIndex = 0;
     state.totalOriginal = requested;
     state.completedOriginalIds = new Set();
+    state.reviewSessionId = redoMode === "keep" ? null : deferredRatings.createSession("single");
+    state.reviewSessionFlushPromise = null;
     state.allowReview = redoMode === "keep" ? true : $("#studyReviewCheckbox").checked;
     state.timerEnabled = $("#studyTimerCheckbox").checked;
     state.revealed = false;
@@ -865,15 +1048,16 @@
     scheduleHomeReviewDecoration();
   }
 
-  function confirmExitStudy() {
+  async function confirmExitStudy() {
     if (!state.sessionActive) {
-      openConfig(state.deckId);
+      await openConfig(state.deckId);
       return;
     }
     if (!window.confirm("Encerrar este estudo agora? O progresso desta sessão será interrompido.")) return;
     stopTimer();
     state.sessionActive = false;
-    openConfig(state.deckId);
+    try { await flushCurrentReviewSession(); } catch (error) { console.error(error); }
+    await openConfig(state.deckId);
   }
 
   function closeCardModal() {
