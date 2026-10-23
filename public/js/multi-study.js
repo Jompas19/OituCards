@@ -10,7 +10,8 @@
     completed: new Set(), total: 0, label: "Estudar selecionados",
     allowRepeat: false, redoMode: "none", active: false, revealed: false,
     timerEnabled: false, timerPaused: false, timerStartedAt: null, elapsedMs: 0, timerId: null,
-    quickEditing: false, quickEditWasPaused: true, deckLoads: new Map(), renderToken: 0
+    quickEditing: false, quickEditWasPaused: true, deckLoads: new Map(), renderToken: 0,
+    reviewSessionId: null, reviewSessionFlushPromise: null
   };
   const $ = (s) => document.querySelector(s);
 
@@ -73,7 +74,28 @@
     }
   }
   function showView(name) { document.querySelectorAll(".view").forEach(v => v.classList.remove("active")); $(`#${name}View`)?.classList.add("active"); window.scrollTo({top:0,behavior:"instant"}); }
-  function home() { stopTimer(); state.active = false; $("#homeButton")?.click(); }
+  async function flushCurrentReviewSession() {
+    const sessionId = state.reviewSessionId;
+    if (!sessionId) return;
+    const drafts = window.OituReviewSessionDrafts;
+    if (!drafts?.flushSession) return;
+    if (!state.reviewSessionFlushPromise) state.reviewSessionFlushPromise = drafts.flushSession(sessionId);
+    try {
+      await state.reviewSessionFlushPromise;
+    } finally {
+      if (state.reviewSessionId === sessionId) state.reviewSessionId = null;
+      state.reviewSessionFlushPromise = null;
+    }
+  }
+  async function home() {
+    stopTimer();
+    const wasActive = state.active;
+    state.active = false;
+    if (wasActive || state.reviewSessionId) {
+      try { await flushCurrentReviewSession(); } catch (error) { console.error(error); }
+    }
+    $("#homeButton")?.click();
+  }
   function ratingOf(card) { if (RATINGS.includes(card?.lastRating)) return card.lastRating; const h = Array.isArray(card?.ratingHistory) ? [...card.ratingHistory].reverse() : []; return h.find(x => RATINGS.includes(x?.rating))?.rating || null; }
   function reviewCount(card) { if (Number.isInteger(card?.reviewCount) && card.reviewCount >= 0) return card.reviewCount; return card?.lastReviewedAt || card?.nextReviewAt || ratingOf(card) ? 1 : 0; }
   function isNew(card) { return reviewCount(card) === 0 && !card?.lastReviewedAt && !card?.nextReviewAt && !ratingOf(card); }
@@ -109,13 +131,30 @@
   async function render(){const e=current();if(!e){finish();return;}const token=++state.renderToken;try{await ensureCardLoaded(e.card);}catch(error){console.error("OituCards: não foi possível carregar o flashcard.",error);return;}if(token!==state.renderToken||e!==current())return;if(window.OituMedia?.setHtml){window.OituMedia.setHtml($("#multiFront"),e.card.frontHtml||"");window.OituMedia.setHtml($("#multiBack"),e.card.backHtml||"",{hydrate:false});}else{$("#multiFront").innerHTML=e.card.frontHtml||"";$("#multiBack").innerHTML=e.card.backHtml||"";}$("#multiDeckChip").textContent=state.decks.get(e.card.deckId)?.name||"Baralho";updateControls();showBack(false);updateProgress();$("#multiPrev").disabled=state.index<=0;$("#multiNextArrow").disabled=state.index>=state.queue.length-1;$("#multiCard").focus({preventScroll:true});preloadNext();}
   function navigate(d){if(!state.active||state.quickEditing)return;const i=state.index+d;if(i<0||i>=state.queue.length)return;state.index=i;render();}
   function scheduleRepeat(e){const gap=3+Math.floor(Math.random()*4);state.queue.splice(Math.min(state.queue.length,state.index+gap+1),0,{card:e.card,done:false,repeat:true,id:crypto.randomUUID()});}
-  async function persist(card,rating){if(state.redoMode==="keep")return;const now=new Date().toISOString();const prev=Array.isArray(card.ratingHistory)?card.ratingHistory:[];if(rating==="repeat"){const patch={ratingHistory:[...prev,{rating,at:now,sessionOnly:true}].slice(-150)};await OituDB.updateCard(card.id,patch);Object.assign(card,patch);return;}const days=nextDays(card,rating),next=new Date();next.setHours(0,0,0,0);next.setDate(next.getDate()+days);const patch={reviewStatus:rating,lastRating:rating,lastReviewedAt:now,reviewCount:reviewCount(card)+1,currentIntervalDays:days,nextReviewAt:next.toISOString(),ratingHistory:[...prev,{rating,at:now,intervalDays:days,nextReviewAt:next.toISOString()}].slice(-150)};await OituDB.updateCard(card.id,patch);Object.assign(card,patch);}
+  async function persist(card,rating){
+    if(state.redoMode==="keep"||rating==="repeat"||!RATINGS.includes(rating))return;
+    const drafts=window.OituReviewSessionDrafts;
+    if(!drafts)return;
+    if(!state.reviewSessionId)state.reviewSessionId=drafts.createSession("multi");
+    drafts.stage(state.reviewSessionId,card,rating);
+  }
   function nextPending(after){for(let i=after+1;i<state.queue.length;i++)if(!state.queue[i].done)return i;for(let i=0;i<=after;i++)if(!state.queue[i].done)return i;return-1;}
-  async function complete(action){const e=current();if(!state.active||!state.revealed||!e||state.quickEditing)return;const keep=state.redoMode==="keep";if(keep&&!['repeat','next'].includes(action))return;if(!keep&&!RATINGS.includes(action)&&action!=="repeat")return;if(action==="repeat"&&!keep&&!state.allowRepeat)return;if(!state.completed.has(e.card.id))state.completed.add(e.card.id);e.done=true;if(action==="repeat")scheduleRepeat(e);if(!keep)await persist(e.card,action);updateProgress();const n=nextPending(state.index);if(n<0){finish();return;}state.index=n;render();}
-  function finish(){const ms=elapsed();state.active=false;stopTimer();$("#multiWorkspace").classList.add("hidden");$("#multiComplete").classList.remove("hidden");const suffix=state.timerEnabled?` em ${fmt(ms)}`:"";$("#multiCompleteText").textContent=`Você concluiu ${state.total} ${state.total===1?"flashcard":"flashcards"}${suffix}.`;$("#homeButton")?.dispatchEvent(new Event("oitucards-refresh"));}
+  async function complete(action){const e=current();if(!state.active||!state.revealed||!e||state.quickEditing)return;const keep=state.redoMode==="keep";if(keep&&!['repeat','next'].includes(action))return;if(!keep&&!RATINGS.includes(action)&&action!=="repeat")return;if(action==="repeat"&&!keep&&!state.allowRepeat)return;if(!state.completed.has(e.card.id))state.completed.add(e.card.id);e.done=true;if(action==="repeat")scheduleRepeat(e);if(!keep)await persist(e.card,action);updateProgress();const n=nextPending(state.index);if(n<0){await finish();return;}state.index=n;render();}
+  async function finish(){
+    const ms=elapsed();
+    state.active=false;
+    stopTimer();
+    try{await flushCurrentReviewSession();}catch(error){console.error(error);}
+    $("#multiWorkspace").classList.add("hidden");
+    $("#multiComplete").classList.remove("hidden");
+    const suffix=state.timerEnabled?` em ${fmt(ms)}`:"";
+    $("#multiCompleteText").textContent=`Você concluiu ${state.total} ${state.total===1?"flashcard":"flashcards"}${suffix}.`;
+    $("#homeButton")?.dispatchEvent(new Event("oitucards-refresh"));
+  }
   async function resetProgress(cards){const patch={reviewStatus:null,lastRating:null,lastReviewedAt:null,reviewCount:0,currentIntervalDays:null,currentIntervalValue:null,currentIntervalUnit:null,currentIntervalMinutes:null,currentIntervalHours:null,nextReviewAt:null,ratingHistory:[]};if(OituDB.resetDeckProgressBatch)await OituDB.resetDeckProgressBatch(cards);else await Promise.all(cards.map(card=>OituDB.updateCard(card.id,patch)));cards.forEach(card=>Object.assign(card,patch));}
-  async function start(event){event.preventDefault();let p=pool();if(!p.length)return;const all=$("#multiAll").checked,n=all?p.length:parseInt($("#multiCount").value,10);if(!Number.isInteger(n)||n<1||n>p.length){alert(`Digite uma quantidade entre 1 e ${p.length}.`);return;}const redo=redoFromUI();if(redo==="reset"){await resetProgress(state.cards);p=[...state.cards];}state.redoMode=redo;const source=$("#multiShuffle").checked?shuffle(p):[...p];state.queue=source.slice(0,n).map(card=>({card,done:false,repeat:false,id:crypto.randomUUID()}));state.index=0;state.completed=new Set();state.total=n;state.allowRepeat=redo==="keep"?true:$("#multiRepeat").checked;state.timerEnabled=$("#multiTimerEnabled").checked;state.active=true;state.revealed=false;$("#multiWorkspace").classList.remove("hidden");$("#multiComplete").classList.add("hidden");showView("multiStudy");startTimer();render();}
+  async function start(event){event.preventDefault();let p=pool();if(!p.length)return;const all=$("#multiAll").checked,n=all?p.length:parseInt($("#multiCount").value,10);if(!Number.isInteger(n)||n<1||n>p.length){alert(`Digite uma quantidade entre 1 e ${p.length}.`);return;}const redo=redoFromUI();if(redo==="reset"){await resetProgress(state.cards);p=[...state.cards];}state.redoMode=redo;const source=$("#multiShuffle").checked?shuffle(p):[...p];state.queue=source.slice(0,n).map(card=>({card,done:false,repeat:false,id:crypto.randomUUID()}));state.index=0;state.completed=new Set();state.total=n;state.reviewSessionId=redo==="keep"?null:window.OituReviewSessionDrafts?.createSession("multi")||null;state.reviewSessionFlushPromise=null;state.allowRepeat=redo==="keep"?true:$("#multiRepeat").checked;state.timerEnabled=$("#multiTimerEnabled").checked;state.active=true;state.revealed=false;$("#multiWorkspace").classList.remove("hidden");$("#multiComplete").classList.add("hidden");showView("multiStudy");startTimer();render();}
   async function openConfig(deckIds,label="Estudar selecionados"){
+    try{await flushCurrentReviewSession();}catch(error){console.error(error);}
     ensureUI();stopTimer();state.active=false;state.deckIds=[...new Set(deckIds)].filter(Boolean);state.label=label;state.decks=new Map();state.cards=[];state.deckLoads=new Map();state.renderToken+=1;
     $("#multiConfigTitle").textContent=label;$("#multiConfigMeta").textContent="Preparando flashcards…";$("#multiStart").disabled=true;showView("multiStudyConfig");
     const [allDecks,cards]=await Promise.all([OituDB.getDecks(),OituDB.getCardSummariesForDecks?OituDB.getCardSummariesForDecks(state.deckIds):Promise.all(state.deckIds.map(id=>OituDB.getCardsByDeck(id))).then(groups=>groups.flat())]);
@@ -127,7 +166,7 @@
   async function quickEdit(){const e=current();if(!state.active||!state.revealed||!e||state.quickEditing)return;const card=await OituDB.getCard(e.card.id);if(!card)return;state.quickEditing=true;state.quickEditWasPaused=state.timerPaused||!state.timerEnabled;if(state.timerEnabled&&!state.timerPaused)toggleTimer();OituEditor.setEditors(card.frontHtml,card.backHtml);$("#cardModalTitle").textContent="Editar flashcard";$("#createCardActions").classList.add("hidden");$("#editCardActions").classList.remove("hidden");$("#cardModal").classList.remove("hidden");document.body.style.overflow="hidden";}
   async function closeQuick(save){if(!state.quickEditing)return;const e=current();if(save&&e){const f=OituEditor.editorFor("front"),b=OituEditor.editorFor("back");if(!OituEditor.hasContent(f)||!OituEditor.hasContent(b)){alert('O campo "Frente" ou "Verso" está vazio!');return;}const patch={frontHtml:OituEditor.sanitizeHtml(f.innerHTML),backHtml:OituEditor.sanitizeHtml(b.innerHTML)};await OituDB.updateCard(e.card.id,patch);state.cards.forEach(c=>{if(c.id===e.card.id)Object.assign(c,patch)});state.queue.forEach(q=>{if(q.card.id===e.card.id)Object.assign(q.card,patch)});if(window.OituMedia?.setHtml){window.OituMedia.setHtml($("#multiFront"),e.card.frontHtml);window.OituMedia.setHtml($("#multiBack"),e.card.backHtml);}else{$("#multiFront").innerHTML=e.card.frontHtml;$("#multiBack").innerHTML=e.card.backHtml;}showBack(true);}$("#cardModal").classList.add("hidden");OituEditor.resetEditors();state.quickEditing=false;if(state.timerEnabled&&!state.quickEditWasPaused)toggleTimer();}
   function bind(){
-    $("#multiConfigForm").addEventListener("submit",start);$("#multiBackHome").addEventListener("click",home);$("#multiCancel").addEventListener("click",home);$("#multiOnlyNew").addEventListener("change",e=>{if(e.target.checked)$("#multiOnlyDue").checked=false;updateConfig();});$("#multiOnlyDue").addEventListener("change",e=>{if(e.target.checked)$("#multiOnlyNew").checked=false;updateConfig();});$("#multiRedo").addEventListener("change",updateRedoUI);document.querySelectorAll('input[name="multiRedoMode"]').forEach(r=>r.addEventListener("change",updateRedoUI));$("#multiAll").addEventListener("change",e=>{$("#multiCount").disabled=e.target.checked;updateConfig();});$("#multiCard").addEventListener("click",()=>{if(state.active&&!state.revealed&&!state.quickEditing)showBack(true)});$("#multiPrev").addEventListener("click",()=>navigate(-1));$("#multiNextArrow").addEventListener("click",()=>navigate(1));$("#multiTimer").addEventListener("click",toggleTimer);$("#multiRatings").addEventListener("click",e=>{const b=e.target.closest("[data-multi-rating]");if(b)complete(b.dataset.multiRating)});$("#multiEdit").addEventListener("click",quickEdit);$("#multiExit").addEventListener("click",()=>{if(!window.confirm("Encerrar este estudo agora?"))return;openConfig(state.deckIds,state.label)});$("#multiAgain").addEventListener("click",()=>openConfig(state.deckIds,state.label));$("#multiHome").addEventListener("click",home);
+    $("#multiConfigForm").addEventListener("submit",start);$("#multiBackHome").addEventListener("click",home);$("#multiCancel").addEventListener("click",home);$("#multiOnlyNew").addEventListener("change",e=>{if(e.target.checked)$("#multiOnlyDue").checked=false;updateConfig();});$("#multiOnlyDue").addEventListener("change",e=>{if(e.target.checked)$("#multiOnlyNew").checked=false;updateConfig();});$("#multiRedo").addEventListener("change",updateRedoUI);document.querySelectorAll('input[name="multiRedoMode"]').forEach(r=>r.addEventListener("change",updateRedoUI));$("#multiAll").addEventListener("change",e=>{$("#multiCount").disabled=e.target.checked;updateConfig();});$("#multiCard").addEventListener("click",()=>{if(state.active&&!state.revealed&&!state.quickEditing)showBack(true)});$("#multiPrev").addEventListener("click",()=>navigate(-1));$("#multiNextArrow").addEventListener("click",()=>navigate(1));$("#multiTimer").addEventListener("click",toggleTimer);$("#multiRatings").addEventListener("click",e=>{const b=e.target.closest("[data-multi-rating]");if(b)complete(b.dataset.multiRating)});$("#multiEdit").addEventListener("click",quickEdit);$("#multiExit").addEventListener("click",async()=>{if(!window.confirm("Encerrar este estudo agora?"))return;state.active=false;try{await flushCurrentReviewSession();}catch(error){console.error(error);}await openConfig(state.deckIds,state.label)});$("#multiAgain").addEventListener("click",()=>openConfig(state.deckIds,state.label));$("#multiHome").addEventListener("click",home);
     document.addEventListener("keydown",e=>{if(!state.active||state.quickEditing||!$("#multiStudyView").classList.contains("active"))return;if(e.code==="Space"){e.preventDefault();if(!state.revealed)showBack(true);return;}if(e.key==="ArrowLeft"){e.preventDefault();navigate(-1);return;}if(e.key==="ArrowRight"){e.preventDefault();navigate(1);return;}if(!state.revealed)return;if(state.redoMode==="keep"){if(e.key==="0"){e.preventDefault();complete("repeat");}return;}const map={"0":"repeat","1":"hard","2":"medium","3":"good","4":"easy"};if(map[e.key]){e.preventDefault();complete(map[e.key]);}});
     document.addEventListener("click",e=>{if(!state.quickEditing)return;const a=e.target.closest("[data-card-action]");const x=e.target.closest('[data-close-modal="cardModal"]');if(!a&&!x)return;e.preventDefault();e.stopImmediatePropagation();if(x||a?.dataset.cardAction==="cancel")closeQuick(false);else if(a?.dataset.cardAction==="save-edit")closeQuick(true);},true);
   }
