@@ -82,6 +82,16 @@ function incomingWins(current, modifiedAt, deviceId) {
   return String(deviceId || "") > String(current.device_id || "");
 }
 
+function itemChange(record) {
+  if (!record) return null;
+  let payload = null;
+  if (!record.deleted && record.payload) {
+    try { payload = JSON.parse(record.payload); } catch (_) { return null; }
+  }
+  return { kind: record.kind, id: record.id, deleted: Boolean(record.deleted),
+    payload, version: Number(record.version) || 0,
+    modifiedAt: Number(record.client_modified_at) || 0 };
+}
 function encoded(value) {
   return encodeURIComponent(String(value));
 }
@@ -204,6 +214,29 @@ export class PortableSyncStore {
       return;
     }
     for (const group of split(unique, 128)) await this.storage.delete(group);
+  }
+
+  async commitChanges(deletes, puts) {
+    const keys = [...deletes];
+    const values = puts instanceof Map ? [...puts.entries()] : [...puts];
+    if (this.kv) {
+      const commit = () => {
+        for (const key of keys) this.kv.delete(key);
+        for (const [key, value] of values) this.kv.put(key, value);
+      };
+      if (typeof this.storage.transactionSync === "function") this.storage.transactionSync(commit);
+      else commit();
+      return;
+    }
+    if (typeof this.storage.transaction === "function") {
+      await this.storage.transaction(async (transaction) => {
+        for (const key of keys) await transaction.delete(key);
+        for (const group of split(values, 128)) await transaction.put(Object.fromEntries(group));
+      });
+      return;
+    }
+    await this.deleteMany(keys);
+    await this.putMany(new Map(values));
   }
 
   async listKeys(prefix) {
@@ -341,9 +374,28 @@ export class PortableSyncStore {
         updated_at: now
       };
       this.phase = "session-profile-create";
-      await this.put(PROFILE_KEY, profile);
-      created = true;
-    } else {
+      const candidate = profile;
+      let existing = null;
+      if (this.kv) {
+        const reserve = () => {
+          existing = this.kv.get(PROFILE_KEY) || null;
+          if (!existing) this.kv.put(PROFILE_KEY, candidate);
+        };
+        if (typeof this.storage.transactionSync === "function") this.storage.transactionSync(reserve);
+        else reserve();
+      } else if (typeof this.storage.transaction === "function") {
+        await this.storage.transaction(async (tx) => {
+          existing = await tx.get(PROFILE_KEY) || null;
+          if (!existing) await tx.put(PROFILE_KEY, candidate);
+        });
+      } else {
+        existing = await this.profile();
+        if (!existing) await this.put(PROFILE_KEY, candidate);
+      }
+      created = !existing;
+      profile = existing || candidate;
+    }
+    if (!created) {
       if (profile.username !== username) return json({ error: "Usuário inválido." }, 403);
       if (Number(profile.locked_until) > now) {
         return json({ error: "Muitas tentativas. Aguarde alguns minutos e tente novamente." }, 429);
@@ -447,35 +499,65 @@ export class PortableSyncStore {
     const deletes = new Set();
     let sequence = Number(profile.seq) || 0;
     let accepted = 0;
+    const results = [];
 
     for (const mutation of mutations) {
       const kind = String(mutation?.kind || "");
       const id = String(mutation?.id || "");
       const operation = mutation?.op === "delete" ? "delete" : "upsert";
-      if (!["deck", "folder", "card"].includes(kind) || !validIdentifier(id)) continue;
+      if (!["deck", "folder", "card"].includes(kind) || !validIdentifier(id)) {
+        results.push({ status: "invalid" });
+        continue;
+      }
       const key = itemKey(kind, id);
       const current = state.get(key) || null;
       const modifiedAt = Math.max(1, Number(mutation.modifiedAt) || Date.now());
-      if (!incomingWins(current, modifiedAt, session.device_id)) continue;
+      if (!incomingWins(current, modifiedAt, session.device_id)) {
+        const sameOperation = current?.deleted === (operation === "delete");
+        let samePayload = operation === "delete";
+        if (operation === "upsert" && mutation?.payload)
+          samePayload = current?.payload === JSON.stringify({ ...mutation.payload, id });
+        results.push(sameOperation && samePayload && Number(current.client_modified_at) === modifiedAt
+          ? { status: "unchanged" }
+          : { status: "conflict", change: itemChange(current) });
+        continue;
+      }
 
       let parentId = current?.parent_id || null;
       let payload = null;
       if (operation === "upsert") {
-        if (!mutation.payload || typeof mutation.payload !== "object" || String(mutation.payload.id || id) !== id) continue;
+        if (!mutation.payload || typeof mutation.payload !== "object" || String(mutation.payload.id || id) !== id) {
+          results.push({ status: "invalid" });
+          continue;
+        }
         payload = JSON.stringify({ ...mutation.payload, id });
-        if (new TextEncoder().encode(payload).byteLength > MAX_ITEM_BYTES) continue;
+        if (new TextEncoder().encode(payload).byteLength > MAX_ITEM_BYTES) {
+          results.push({ status: "invalid" });
+          continue;
+        }
         parentId = kind === "card" ? String(mutation.payload.deckId || "") :
           kind === "deck" ? (mutation.payload.folderId ? String(mutation.payload.folderId) : null) :
           (mutation.payload.parentId ? String(mutation.payload.parentId) : null);
-        if (kind === "card" && !validIdentifier(parentId)) continue;
+        if (kind === "card" && !validIdentifier(parentId)) {
+          results.push({ status: "invalid" });
+          continue;
+        }
         if (kind === "card") {
-          const parentKey = itemKey("deck", parentId);
-          const parent = state.get(parentKey) || puts.get(parentKey);
-          if (parent?.deleted && Number(parent.client_modified_at) >= modifiedAt) continue;
+          const parent = state.get(itemKey("deck", parentId)) || puts.get(itemKey("deck", parentId));
+          if (!parent || parent.deleted) {
+            results.push(parent?.deleted
+              ? { status: "conflict", change: itemChange(parent) }
+              : { status: "invalid" });
+            continue;
+          }
         }
         if (current && !current.deleted && Number(current.client_modified_at) === modifiedAt &&
-          current.parent_id === parentId && current.payload === payload) continue;
+          current.parent_id === parentId && current.payload === payload) {
+          results.push({ status: "unchanged" });
+          continue;
+        }
       } else if (current?.deleted && Number(current.client_modified_at) === modifiedAt) {
+        results.push({ status: "unchanged" });
         continue;
       }
 
@@ -507,6 +589,7 @@ export class PortableSyncStore {
       puts.set(changeKey(sequence), { type: "item", kind, id, version: sequence });
       state.set(key, record);
       accepted += 1;
+      results.push({ status: "applied" });
       if (kind === "deck" && record.deleted) {
         await this.cascadeDeckDelete(id, modifiedAt, session.device_id, puts, deletes, () => {
           sequence += 1;
@@ -518,10 +601,9 @@ export class PortableSyncStore {
     if (accepted) {
       profile = { ...profile, seq: sequence, updated_at: Date.now() };
       puts.set(PROFILE_KEY, profile);
-      await this.deleteMany([...deletes]);
-      await this.putMany(puts);
+      await this.commitChanges(deletes, puts);
     }
-    return json({ accepted, currentVersion: sequence });
+    return json({ accepted, currentVersion: sequence, results });
   }
 
   async pushMedia(request, session) {
@@ -636,8 +718,7 @@ export class PortableSyncStore {
       profile = { ...profile, seq: sequence, updated_at: Date.now() };
       puts.set(PROFILE_KEY, profile);
     }
-    await this.deleteMany([...deletes]);
-    await this.putMany(puts);
+    await this.commitChanges(deletes, puts);
     return json({ completed, currentVersion: sequence });
   }
 
