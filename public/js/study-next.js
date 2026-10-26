@@ -127,8 +127,8 @@
 
     async function waitForReviewPipeline(attempt = 0) {
       const dbReady = window.OituDB?.getCard && window.OituDB?.updateCard;
-      const timeReady = window.__oitucardsReviewTimeUnits || window.__oitucardsReviewTimeAuthorityV1;
-      if (dbReady && (timeReady || attempt >= 120)) return;
+      if (dbReady) return;
+      if (attempt >= 40) throw new Error("Banco local de revisão ainda não está disponível.");
       await new Promise((resolve) => setTimeout(resolve, 25));
       return waitForReviewPipeline(attempt + 1);
     }
@@ -191,6 +191,8 @@
         }
 
         try { window.OituReviewFinalAuthority?.refreshCounts?.(); } catch (_) {}
+        try { await window.OituSync?.syncNow?.({ message: "Salvando seu progresso..." }); }
+        catch (error) { console.warn("OituCards: progresso salvo localmente e aguardando sincronização.", error); }
       })().finally(() => locks.delete(sessionId));
 
       locks.set(sessionId, task);
@@ -208,17 +210,24 @@
     function recoverPending(attempt = 0) {
       const store = readStore();
       if (!Object.keys(store.entries).length) return;
-      const ready = window.OituDB?.getCard && window.OituDB?.updateCard &&
-        (window.__oitucardsReviewTimeUnits || window.__oitucardsReviewTimeAuthorityV1);
-      if (ready || attempt >= 160) {
+      const ready = window.OituDB?.getCard && window.OituDB?.updateCard;
+      if (ready) {
         void flushAll().catch((error) => console.error("OituCards: falha ao consolidar avaliações pendentes.", error));
+        return;
+      }
+      if (attempt >= 80) {
+        console.error("OituCards: banco local indisponível para recuperar avaliações pendentes.");
         return;
       }
       setTimeout(() => recoverPending(attempt + 1), 50);
     }
 
-    window.addEventListener("pagehide", () => {
-      void flushAll().catch(() => {});
+    const persistPendingBeforeSuspend = () => {
+      void flushAll().then(() => window.OituSync?.syncNow?.()).catch(() => {});
+    };
+    window.addEventListener("pagehide", persistPendingBeforeSuspend);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") persistPendingBeforeSuspend();
     });
 
     const api = { createSession, stage, flushSession, flushAll };

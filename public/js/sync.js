@@ -340,13 +340,15 @@
   }
 
   async function expireSession() {
+    const expiredUsername = session?.username || "";
     session = null;
     lastError = "Sessão expirada. Conecte novamente.";
-    await clearStores(["queue", "mediaQueue"]);
     const db = await openSyncDB();
     await new Promise((resolve) => {
       const tx = db.transaction("state", "readwrite");
-      tx.objectStore("state").delete("session");
+      const store = tx.objectStore("state");
+      store.delete("session");
+      if (expiredUsername) store.put({ key: "pendingProfile", username: expiredUsername });
       tx.oncomplete = resolve;
       tx.onerror = resolve;
     });
@@ -708,7 +710,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password, passwordProof, legacyPasswordProof, deviceId })
       });
-      await clearStores(["queue", "mediaQueue"]);
+      const pendingProfile = await readRecord("state", "pendingProfile");
+      if (pendingProfile?.username && pendingProfile.username !== result.username) {
+        await clearStores(["queue", "mediaQueue"]);
+      }
       session = {
         username: result.username,
         token: result.token,
@@ -720,12 +725,19 @@
         lastSyncedAt: 0
       };
       await saveSession();
+      const db = await openSyncDB();
+      await new Promise((resolve) => {
+        const tx = db.transaction("state", "readwrite");
+        tx.objectStore("state").delete("pendingProfile");
+        tx.oncomplete = resolve;
+        tx.onerror = resolve;
+      });
       renderStatus("Preparando a biblioteca deste aparelho...");
       if (result.created || result.isSourceDevice) {
         const snapshot = await OituDB.getSyncSnapshot();
         await queueSnapshot(snapshot);
-        await flushMutations();
       }
+      await flushMutations();
       await pullChanges();
       session.lastSyncedAt = Date.now();
       await saveSession();
@@ -877,7 +889,12 @@
   window.OituSync = {
     ensureMedia,
     syncNow,
-    isConnected: () => Boolean(session)
+    isConnected: () => Boolean(session),
+    flushPending: async () => {
+      if (!session || navigator.onLine === false) return false;
+      await syncNow({ message: "Salvando seu progresso..." });
+      return !lastError;
+    }
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
